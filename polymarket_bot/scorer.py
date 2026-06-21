@@ -74,6 +74,7 @@ def _call_deepseek(user_message: str, model: str) -> dict[str, Any] | None:
 
     last_error: Exception | None = None
     for attempt in range(2):
+        raw = ""
         try:
             response = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=30)
             if response.status_code >= 400:
@@ -83,11 +84,10 @@ def _call_deepseek(user_message: str, model: str) -> dict[str, Any] | None:
                     continue
                 response.raise_for_status()
             raw = response.json()["choices"][0]["message"]["content"].strip()
-            try:
-                return json.loads(raw)
-            except json.JSONDecodeError:
-                LOGGER.error("deepseek returned non-json payload: %s", raw)
-                return None
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            LOGGER.error("deepseek returned non-json payload: %s", raw)
+            return None
         except requests.RequestException as exc:
             last_error = exc
             if attempt == 0:

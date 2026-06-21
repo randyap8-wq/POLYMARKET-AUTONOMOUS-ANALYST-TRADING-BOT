@@ -10,9 +10,11 @@ from polymarket_bot.fetcher import fetch_markets
 
 class FetchMarketsTests(unittest.TestCase):
     @patch("polymarket_bot.fetcher.requests.get")
-    def test_fetch_markets_normalizes_and_filters(self, mock_get):
-        future = (datetime.now(timezone.utc) + timedelta(days=5)).isoformat()
-        far_future = (datetime.now(timezone.utc) + timedelta(days=90)).isoformat()
+    @patch("polymarket_bot.fetcher.datetime", wraps=datetime)
+    def test_fetch_markets_normalizes_and_filters(self, mock_datetime, mock_get):
+        fixed_now = datetime(2026, 6, 21, tzinfo=timezone.utc)
+        future = (fixed_now + timedelta(days=5)).isoformat()
+        far_future = (fixed_now + timedelta(days=90)).isoformat()
         payload = [
             {
                 "id": "keep",
@@ -49,6 +51,7 @@ class FetchMarketsTests(unittest.TestCase):
         mock_response.json.return_value = payload
         mock_response.raise_for_status.return_value = None
         mock_get.return_value = mock_response
+        mock_datetime.now.return_value = fixed_now
 
         markets = fetch_markets()
 

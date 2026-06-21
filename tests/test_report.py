@@ -48,7 +48,7 @@ class BuildReportTests(unittest.TestCase):
         self.assertEqual(report["opportunities_found"], 1)
         self.assertEqual(report["opportunities"][0]["rank"], 1)
         self.assertEqual(report["opportunities"][0]["recommended_outcome"], "Yes")
-        self.assertEqual(report["opportunities"][0]["top_news"][0]["date"], "2026-06-21")
+        self.assertEqual(report["opportunities"][0]["top_news"][0]["published_date"], "2026-06-21")
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@ def build_report(all_markets, scored_results) -> dict:
                     {
                         "title": news_item.get("title", ""),
                         "url": news_item.get("url", ""),
-                        "date": news_item.get("published_date", news_item.get("date", "")),
+                        "published_date": news_item.get("published_date", news_item.get("date", "")),
                     }
                     for news_item in item.get("top_news", [])[:3]
                 ],
