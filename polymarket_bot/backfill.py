@@ -27,7 +27,7 @@ DATA_DIR.mkdir(exist_ok=True)
 
 def _fetch_recently_closed(days_back: int = 14, limit: int = 50) -> list[dict]:
     """Fetch markets that closed in the last `days_back` days."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).isoformat()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
     try:
         resp = requests.get(
             f"{GAMMA_BASE}/markets",
@@ -55,7 +55,7 @@ def _fetch_recently_closed(days_back: int = 14, limit: int = 50) -> list[dict]:
             res_dt = datetime.fromisoformat(str(resolution_time).replace("Z", "+00:00"))
             if res_dt.tzinfo is None:
                 res_dt = res_dt.replace(tzinfo=timezone.utc)
-            if res_dt.isoformat() < cutoff:
+            if res_dt < cutoff:
                 continue  # too old
 
             outcomes = json.loads(m.get("outcomes") or "[]")
