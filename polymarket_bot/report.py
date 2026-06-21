@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover
 
 
 def _kelly_fraction(price: float, fair_value: float) -> float:
-    """Half-Kelly stake fraction for a binary YES-style bet.
+    """Half-Kelly stake fraction for a $1-payout binary share.
 
     ``price`` is the entry cost per share and ``fair_value`` is the model's
     estimated win probability. Returns a capped, conservative fraction used as

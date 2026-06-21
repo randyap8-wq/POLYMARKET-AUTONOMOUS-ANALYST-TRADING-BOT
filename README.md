@@ -15,7 +15,7 @@ The implementation lives under `polymarket_bot/`.
 | File | Purpose |
 | --- | --- |
 | `config.py` | Environment, paths, and tunable filters/thresholds. |
-| `fetcher.py` | Fetches and filters active markets from the Gamma API (paginated, up to 150); tags each with a `market_category` and drops disabled categories. |
+| `fetcher.py` | Fetches and filters active markets from the Gamma API (paginated, up to 150); tags each with a `category` field and drops disabled categories. |
 | `categories.py` | Keyword-based market categorisation used for breakdowns and filtering. |
 | `news.py` | Tavily news search per market with a dynamic time window plus a counter-evidence query. |
 | `scorer.py` | DeepSeek fair-value scoring with a reasoner second opinion and per-run token-cost tracking. |
