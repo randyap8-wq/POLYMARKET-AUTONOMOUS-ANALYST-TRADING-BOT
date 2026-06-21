@@ -11,7 +11,10 @@ def main():
     parser.add_argument("--paper",     action="store_true", help="Record hypothetical bets, no real trades")
     parser.add_argument("--validate",  action="store_true", help="Print signal validation report and exit")
     parser.add_argument("--dashboard", action="store_true", help="Launch web dashboard (requires fastapi + uvicorn)")
+    parser.add_argument("--backfill",  action="store_true", help="Score recently closed markets and bootstrap resolved.jsonl")
+    parser.add_argument("--backfill-days", type=int, default=14, help="How many days back to look for closed markets (default 14)")
     parser.add_argument("--loop",      type=int, default=0, help="Repeat every N minutes (0 = run once)")
+    parser.add_argument("--host",      type=str, default="127.0.0.1", help="Dashboard bind host (default 127.0.0.1; pass --host 0.0.0.0 for remote access and use a firewall/auth when doing so)")
     parser.add_argument("--port",      type=int, default=8080, help="Dashboard port (default 8080)")
     args = parser.parse_args()
 
@@ -24,13 +27,24 @@ def main():
         generate_performance_report()
         sys.exit(0)
 
+    # --backfill: bootstrap resolved.jsonl from historical closed markets and exit
+    if args.backfill:
+        try:
+            from .backfill import run_backfill
+        except ImportError:
+            from backfill import run_backfill
+        count = run_backfill(days_back=args.backfill_days)
+        print(f"[backfill] wrote {count} synthetic resolved bets")
+        print("[backfill] NOTE: uses current news — has look-ahead bias. Run --validate after.")
+        sys.exit(0)
+
     # --dashboard: launch web UI and exit
     if args.dashboard:
         try:
             from .dashboard import run_dashboard
         except ImportError:
             from dashboard import run_dashboard
-        run_dashboard(port=args.port)
+        run_dashboard(host=args.host, port=args.port)
         sys.exit(0)
 
     if not args.analyze and not args.trade and not args.paper:
@@ -88,7 +102,7 @@ def main():
                     )
 
         elif args.paper:
-            for opportunity in report["opportunities"][:3]:
+            for opportunity in report["opportunities"][:5]:
                 record_paper_bet(opportunity, opportunity, opportunity.get("top_news", []))
 
     if args.loop > 0:

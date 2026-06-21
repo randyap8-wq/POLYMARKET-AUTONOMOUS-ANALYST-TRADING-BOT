@@ -22,11 +22,24 @@ RESOLVED_PATH = DATA_DIR / "resolved.jsonl"
 DATA_DIR.mkdir(exist_ok=True)
 
 
-def record_paper_bet(market: dict, score: dict, news: list[dict]) -> dict:
+def record_paper_bet(market: dict, score: dict, news: list[dict]) -> dict | None:
     """
-    Append a hypothetical bet to paper_bets.jsonl.
+    Append a hypothetical bet to paper_bets.jsonl only if no pending bet for
+    the same market (condition_id) already exists. Returns the entry or None
+    if skipped.
     check_resolutions may later rewrite the file in place to update statuses.
     """
+    condition_id = market.get("condition_id", "")
+    if condition_id:
+        existing = _load_paper_bets()
+        already_pending = any(
+            b.get("condition_id") == condition_id and b.get("status") == "pending"
+            for b in existing
+        )
+        if already_pending:
+            LOGGER.debug("skipping duplicate paper bet for %s", condition_id)
+            return None
+
     current_price = float(score.get("current_price") or 0.01)
     usdc = 10.0  # fixed paper stake
     tokens = round(usdc / max(current_price, 0.01), 2)
@@ -36,7 +49,7 @@ def record_paper_bet(market: dict, score: dict, news: list[dict]) -> dict:
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "question": market.get("question", ""),
         "url": market.get("url", ""),
-        "condition_id": market.get("condition_id", ""),
+        "condition_id": condition_id,
         "recommended_outcome": score.get("recommended_outcome"),
         "recommended_outcome_index": score.get("recommended_outcome_index"),
         "category": market.get("category", score.get("category", "other")),

@@ -72,6 +72,24 @@ class FetchNewsTests(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
 
+    @patch.object(news, "TAVILY_API_KEY", "fake-key")
+    @patch.object(news, "TavilyClient")
+    def test_counter_query_uses_focused_negation(self, mock_client_cls):
+        client = mock_client_cls.return_value
+        queries = []
+
+        def fake_search(query, **kwargs):
+            queries.append(query)
+            return {"results": []}
+
+        client.search.side_effect = fake_search
+
+        fetch_news("Will X happen?", None, counter_evidence=True)
+
+        counter_calls = [q for q in queries if "reasons why NOT" in q]
+        self.assertTrue(len(counter_calls) >= 1)
+        self.assertFalse(any("evidence against" in q for q in queries))
+
     @patch.object(news, "TAVILY_API_KEY", "")
     def test_missing_key_returns_empty(self):
         self.assertEqual(fetch_news("anything"), [])

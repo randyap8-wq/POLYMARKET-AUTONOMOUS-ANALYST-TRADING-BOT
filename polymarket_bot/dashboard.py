@@ -375,11 +375,12 @@ function renderOverview() {
     return;
   }
   document.getElementById('overview-opps').innerHTML = `<table>
-    <tr><th>Market</th><th>Outcome</th><th>Edge</th><th>Confidence</th><th>Price</th></tr>
+    <tr><th>Market</th><th>Outcome</th><th>Edge</th><th>Kelly</th><th>Confidence</th><th>Price</th></tr>
     ${opps.map(o => `<tr>
       <td>${q_cell(o.question, o.url, o.end_date ? 'Closes ' + o.end_date.slice(0,10) : '')}</td>
       <td><b>${esc(o.recommended_outcome)}</b></td>
       <td>${edge_bar(o.edge)}</td>
+      <td style="font-family:var(--mono);color:${(o.kelly_fraction||0) >= 0.15 ? 'var(--win)' : 'var(--accent2)'}">${((o.kelly_fraction||0)*100).toFixed(1)}%</td>
       <td>${pill_conf(o.confidence)}</td>
       <td style="font-family:var(--mono)">${fmt_price(o.current_price)} → ${fmt_price(o.fair_value_estimate)}</td>
     </tr>`).join('')}
@@ -396,13 +397,14 @@ function renderOpportunities() {
     return;
   }
   document.getElementById('opps-table').innerHTML = `<table>
-    <tr><th>#</th><th>Market</th><th>Category</th><th>Outcome</th><th>Edge</th><th>Confidence</th><th>Current Price</th><th>Fair Value</th><th>Volume</th></tr>
+    <tr><th>#</th><th>Market</th><th>Category</th><th>Outcome</th><th>Edge</th><th>Kelly</th><th>Confidence</th><th>Current Price</th><th>Fair Value</th><th>Volume</th></tr>
     ${opps.map(o => `<tr>
       <td style="color:var(--muted);font-family:var(--mono)">#${esc(o.rank)}</td>
       <td>${q_cell(o.question, o.url, o.reasoning ? o.reasoning.slice(0,80)+'…' : '')}</td>
       <td style="color:var(--muted)">${esc(o.category || 'other')}</td>
       <td><b>${esc(o.recommended_outcome)}</b></td>
       <td>${edge_bar(o.edge)}</td>
+      <td style="font-family:var(--mono);color:${(o.kelly_fraction||0) >= 0.15 ? 'var(--win)' : 'var(--accent2)'}">${((o.kelly_fraction||0)*100).toFixed(1)}%</td>
       <td>${pill_conf(o.confidence)}</td>
       <td style="font-family:var(--mono)">${fmt_price(o.current_price)}</td>
       <td style="font-family:var(--mono);color:var(--accent)">${fmt_price(o.fair_value_estimate)}</td>
@@ -421,6 +423,7 @@ function renderPaper() {
 
   document.getElementById('paper-stats').innerHTML = [
     stat_card('Pending Bets', pending.length, 'accent'),
+    stat_card('Total Recorded', DATA.paper_total_count || 0, '', 'all time'),
     stat_card('Total Stake (Paper)', `$${total_stake.toFixed(0)}`, '', 'hypothetical USDC'),
     stat_card('Avg Edge', avg_edge.toFixed(3), 'accent'),
   ].join('');
@@ -607,6 +610,7 @@ def create_app():
             "performance": performance,
             "paper_bets": pending,
             "paper_pending_count": len(pending),
+            "paper_total_count": len(paper_bets),
             "resolved_bets": resolved,
             "resolved_count": len(resolved),
             "trades": trades,

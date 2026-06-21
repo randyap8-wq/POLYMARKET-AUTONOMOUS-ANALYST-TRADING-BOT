@@ -143,6 +143,15 @@ class CheckResolutionsTests(unittest.TestCase):
         self.assertEqual(len(bets), 1)
         self.assertEqual(bets[0]["status"], "resolved")
 
+    def test_duplicate_paper_bet_for_same_condition_id_is_skipped(self):
+        market = {"condition_id": "cond-dup", "question": "Will it rain?", "url": ""}
+        score = {"current_price": 0.4, "recommended_outcome": "Yes"}
+        first = paper_trader.record_paper_bet(market, score, [])
+        second = paper_trader.record_paper_bet(market, score, [])
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+        self.assertEqual(len(paper_trader._load_paper_bets()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
