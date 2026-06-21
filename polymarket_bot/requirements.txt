@@ -5,3 +5,5 @@ eth-account
 web3
 schedule
 py-clob-client==0.34.6
+fastapi
+uvicorn

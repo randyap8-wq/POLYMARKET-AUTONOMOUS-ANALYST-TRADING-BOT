@@ -11,6 +11,13 @@ LOGS_DIR = BASE_DIR / "logs"
 REPORT_PATH = BASE_DIR / "report.json"
 TRADES_LOG_PATH = LOGS_DIR / "trades.jsonl"
 
+DATA_DIR = BASE_DIR / "data"
+PAPER_BETS_PATH = DATA_DIR / "paper_bets.jsonl"
+RESOLVED_PATH = DATA_DIR / "resolved.jsonl"
+PERFORMANCE_PATH = DATA_DIR / "performance.json"
+
+DATA_DIR.mkdir(exist_ok=True)
+
 load_dotenv(BASE_DIR / ".env")
 LOGS_DIR.mkdir(exist_ok=True)
 

@@ -23,6 +23,19 @@ def _build_user_message(market: dict, news: list[dict]) -> str:
     news_str = "\n\n".join(
         f"[{item['published_date']}] {item['title']}\n{item['snippet']}" for item in news
     ) or "No recent news found."
+
+    days_remaining = ""
+    try:
+        from datetime import datetime, timezone
+
+        end = datetime.fromisoformat(market.get("end_date", "").replace("Z", "+00:00"))
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        delta = (end - datetime.now(timezone.utc)).days
+        days_remaining = f"Days until market closes: {delta}"
+    except Exception:
+        pass
+
     return f"""
 Market: {market['question']}
 End date: {market['end_date']}
@@ -34,6 +47,8 @@ Current outcome prices:
 
 Recent news (last 3 days):
 {news_str}
+
+{days_remaining}
 
 Analyze whether any outcome is mispriced given this news.
 Return ONLY a valid JSON object, no markdown, no explanation outside the JSON:
@@ -84,7 +99,12 @@ def _call_deepseek(user_message: str, model: str) -> dict[str, Any] | None:
                     continue
                 response.raise_for_status()
             raw = response.json()["choices"][0]["message"]["content"].strip()
-            return json.loads(raw)
+            clean = raw.strip()
+            if clean.startswith("```"):
+                clean = clean.split("```")[1]
+                if clean.startswith("json"):
+                    clean = clean[4:]
+            return json.loads(clean.strip())
         except json.JSONDecodeError:
             LOGGER.error("deepseek returned non-json payload: %s", raw)
             return None
