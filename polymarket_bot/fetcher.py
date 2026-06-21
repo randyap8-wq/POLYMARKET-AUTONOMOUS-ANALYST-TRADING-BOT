@@ -23,18 +23,35 @@ def _parse_end_date(raw_value: str) -> datetime:
 
 
 def fetch_markets() -> list[dict]:
-    response = requests.get(
-        f"{GAMMA_BASE}/markets",
-        params={
-            "active": "true",
-            "closed": "false",
-            "limit": MARKET_FILTERS["limit"],
-            "order": "volume",
-            "ascending": "false",
-        },
-        timeout=30,
-    )
-    response.raise_for_status()
+    all_raw: list[dict] = []
+    seen_ids: set[str] = set()
+
+    for offset in [0, 50, 100]:
+        try:
+            response = requests.get(
+                f"{GAMMA_BASE}/markets",
+                params={
+                    "active": "true",
+                    "closed": "false",
+                    "limit": MARKET_FILTERS["limit"],
+                    "offset": offset,
+                    "order": "volume",
+                    "ascending": "false",
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            page = response.json()
+            if not page:
+                break
+            for market in page:
+                mid = market.get("id")
+                if mid and mid not in seen_ids:
+                    seen_ids.add(mid)
+                    all_raw.append(market)
+        except Exception as exc:
+            LOGGER.warning("failed to fetch page at offset %s: %s", offset, exc)
+            break
 
     now = datetime.now(timezone.utc)
     dropped_volume = 0
@@ -42,7 +59,7 @@ def fetch_markets() -> list[dict]:
     dropped_outcomes = 0
     filtered: list[dict] = []
 
-    for market in response.json():
+    for market in all_raw:
         try:
             end_date = _parse_end_date(market["endDate"])
             outcomes = json.loads(market["outcomes"])
