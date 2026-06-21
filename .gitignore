@@ -1,0 +1,7 @@
+.env
+polymarket_bot/.env
+polymarket_bot/report.json
+polymarket_bot/logs/trades.jsonl
+__pycache__/
+*.py[cod]
+.pytest_cache/
