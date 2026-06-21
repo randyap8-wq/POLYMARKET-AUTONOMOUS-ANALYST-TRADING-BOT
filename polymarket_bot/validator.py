@@ -75,6 +75,19 @@ def generate_performance_report() -> dict:
         for bucket, bets in edge_groups.items()
     }
 
+    # By category
+    cat_groups: dict[str, list[dict]] = {}
+    for b in resolved:
+        cat_groups.setdefault(b.get("category", "other"), []).append(b)
+    category_stats = {
+        category: {
+            "count": len(bets),
+            "win_rate": round(_win_rate(bets), 4),
+            "avg_pnl": round(_avg_pnl(bets), 4),
+        }
+        for category, bets in sorted(cat_groups.items())
+    }
+
     # Generate recommendation
     recommendations = []
     if total < 30:
@@ -98,6 +111,15 @@ def generate_performance_report() -> dict:
         if best_bucket[1]["win_rate"] >= 0.65 and best_bucket[1]["count"] > 3:
             recommendations.append(f"✅ Best edge bucket: {best_bucket[0]} (win rate {best_bucket[1]['win_rate']*100:.0f}%). Focus here.")
 
+        weak_categories = [
+            c for c, s in category_stats.items() if s["count"] >= 4 and s["win_rate"] < 0.50
+        ]
+        if weak_categories:
+            recommendations.append(
+                f"⚠️  Weak categories (<50% win on 4+ bets): {', '.join(weak_categories)}. "
+                f"Consider DISABLED_CATEGORIES={','.join(weak_categories)} in .env."
+            )
+
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "total_bets": total,
@@ -108,6 +130,7 @@ def generate_performance_report() -> dict:
         "avg_edge_detected": round(avg_edge, 4),
         "by_confidence": conf_stats,
         "by_edge_bucket": edge_stats,
+        "by_category": category_stats,
         "recommendations": recommendations,
     }
 
@@ -139,6 +162,11 @@ def generate_performance_report() -> dict:
     for bucket, s in edge_stats.items():
         if s["count"] > 0:
             print(row(f"  {bucket}", f"{s['win_rate']*100:.1f}% win  ({s['count']} bets)  avg ${s['avg_pnl']:+.2f}"))
+    print("╠" + "═" * w + "╣")
+    print(f"║{'  BY CATEGORY':^{w}}║")
+    for category, s in category_stats.items():
+        if s["count"] > 0:
+            print(row(f"  {category}", f"{s['win_rate']*100:.1f}% win  ({s['count']} bets)  avg ${s['avg_pnl']:+.2f}"))
     print("╠" + "═" * w + "╣")
     print(f"║{'  RECOMMENDATIONS':^{w}}║")
     for rec in recommendations:

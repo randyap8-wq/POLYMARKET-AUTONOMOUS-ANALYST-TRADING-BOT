@@ -7,9 +7,11 @@ from datetime import datetime, timezone
 import requests
 
 try:
-    from .config import GAMMA_BASE, MARKET_FILTERS
+    from .config import GAMMA_BASE, MARKET_FILTERS, DISABLED_CATEGORIES
+    from .categories import categorize
 except ImportError:  # pragma: no cover
-    from config import GAMMA_BASE, MARKET_FILTERS
+    from config import GAMMA_BASE, MARKET_FILTERS, DISABLED_CATEGORIES
+    from categories import categorize
 
 LOGGER = logging.getLogger("fetcher")
 
@@ -59,6 +61,7 @@ def fetch_markets() -> list[dict]:
     dropped_volume = 0
     dropped_end_date = 0
     dropped_outcomes = 0
+    dropped_category = 0
     filtered: list[dict] = []
 
     for market in all_raw:
@@ -76,6 +79,7 @@ def fetch_markets() -> list[dict]:
                 "end_date": market["endDate"],
                 "slug": market.get("slug", ""),
                 "url": f"https://polymarket.com/event/{market.get('slug', '')}",
+                "category": categorize(market.get("question", "")),
             }
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             LOGGER.warning("skipping malformed market: %s", exc)
@@ -94,9 +98,15 @@ def fetch_markets() -> list[dict]:
             dropped_outcomes += 1
             continue
 
+        if normalized["category"] in DISABLED_CATEGORIES:
+            dropped_category += 1
+            continue
+
         filtered.append(normalized)
 
     LOGGER.info("dropped %s markets for low volume", dropped_volume)
     LOGGER.info("dropped %s markets for end date window", dropped_end_date)
     LOGGER.info("dropped %s markets for too many outcomes", dropped_outcomes)
+    if DISABLED_CATEGORIES:
+        LOGGER.info("dropped %s markets for disabled categories", dropped_category)
     return filtered

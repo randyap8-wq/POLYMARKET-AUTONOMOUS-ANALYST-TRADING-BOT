@@ -39,6 +39,7 @@ def record_paper_bet(market: dict, score: dict, news: list[dict]) -> dict:
         "condition_id": market.get("condition_id", ""),
         "recommended_outcome": score.get("recommended_outcome"),
         "recommended_outcome_index": score.get("recommended_outcome_index"),
+        "category": market.get("category", score.get("category", "other")),
         "current_price": current_price,
         "fair_value_estimate": float(score.get("fair_value_estimate") or 0.0),
         "edge": float(score.get("edge") or 0.0),
