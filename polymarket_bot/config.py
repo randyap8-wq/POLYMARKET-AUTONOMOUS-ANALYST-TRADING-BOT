@@ -40,7 +40,49 @@ DEEPSEEK_MODEL = "deepseek-chat"
 DEEPSEEK_REASONER_MODEL = "deepseek-reasoner"
 DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 
+# DeepSeek token pricing in USD per 1M tokens. Defaults track published
+# deepseek-chat / deepseek-reasoner standard rates and can be overridden via env
+# as the provider adjusts pricing.
+DEEPSEEK_PRICING = {
+    DEEPSEEK_MODEL: {
+        "input": float(os.getenv("DEEPSEEK_CHAT_INPUT_PRICE", "0.27")),
+        "output": float(os.getenv("DEEPSEEK_CHAT_OUTPUT_PRICE", "1.10")),
+    },
+    DEEPSEEK_REASONER_MODEL: {
+        "input": float(os.getenv("DEEPSEEK_REASONER_INPUT_PRICE", "0.55")),
+        "output": float(os.getenv("DEEPSEEK_REASONER_OUTPUT_PRICE", "2.19")),
+    },
+}
+
 CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
+
+# News search window (Tavily `days`). The window is widened dynamically for
+# slower-moving markets (those that close further in the future) so the model
+# sees enough context, while fast-moving markets stay focused on fresh news.
+NEWS_WINDOW_MIN_DAYS = int(os.getenv("NEWS_WINDOW_MIN_DAYS", "3"))
+NEWS_WINDOW_MAX_DAYS = int(os.getenv("NEWS_WINDOW_MAX_DAYS", "30"))
+
+# Pull a second, negation-focused Tavily query per market so the model also
+# weighs evidence against the favoured outcome (reduces overconfidence).
+COUNTER_EVIDENCE_ENABLED = os.getenv("COUNTER_EVIDENCE", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+# Avoid recommending bets at extreme prices: edges there are noisy and the
+# risk/reward is poor (a 0.02 -> 0.04 "edge" is mostly microstructure noise).
+MIN_PRICE = float(os.getenv("MIN_PRICE", "0.05"))
+MAX_PRICE = float(os.getenv("MAX_PRICE", "0.95"))
+
+# Comma-separated market categories to skip entirely (e.g. "sports,entertainment").
+# Useful once --validate shows a category consistently loses money.
+DISABLED_CATEGORIES = {
+    item.strip().lower()
+    for item in os.getenv("DISABLED_CATEGORIES", "").split(",")
+    if item.strip()
+}
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")

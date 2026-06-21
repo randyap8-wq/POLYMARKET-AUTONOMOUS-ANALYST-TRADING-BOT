@@ -356,6 +356,8 @@ function renderOverview() {
   const pnl = perf.total_pnl_usdc != null ? `$${perf.total_pnl_usdc > 0 ? '+' : ''}${(+perf.total_pnl_usdc).toFixed(2)}` : '—';
   const pnl_cls = (perf.total_pnl_usdc || 0) >= 0 ? 'green' : 'red';
   const wr_cls = (perf.win_rate || 0) >= 0.55 ? 'green' : (perf.win_rate || 0) >= 0.5 ? 'accent' : 'red';
+  const usage = r.token_usage || {};
+  const cost = usage.cost_usd != null ? `$${(+usage.cost_usd).toFixed(4)}` : '—';
 
   document.getElementById('overview-stats').innerHTML = [
     stat_card('Markets Scanned', r.markets_scanned || 0, 'accent'),
@@ -364,6 +366,7 @@ function renderOverview() {
     stat_card('Resolved Bets', DATA.resolved_count || 0, ''),
     stat_card('Win Rate', wr, wr_cls, `${perf.total_bets || 0} resolved`),
     stat_card('Paper P&L', pnl, pnl_cls, 'hypothetical'),
+    stat_card('LLM Cost / Scan', cost, '', `${usage.total_tokens || 0} tokens`),
   ].join('');
 
   const opps = (r.opportunities || []).slice(0, 5);
@@ -393,10 +396,11 @@ function renderOpportunities() {
     return;
   }
   document.getElementById('opps-table').innerHTML = `<table>
-    <tr><th>#</th><th>Market</th><th>Outcome</th><th>Edge</th><th>Confidence</th><th>Current Price</th><th>Fair Value</th><th>Volume</th></tr>
+    <tr><th>#</th><th>Market</th><th>Category</th><th>Outcome</th><th>Edge</th><th>Confidence</th><th>Current Price</th><th>Fair Value</th><th>Volume</th></tr>
     ${opps.map(o => `<tr>
       <td style="color:var(--muted);font-family:var(--mono)">#${esc(o.rank)}</td>
       <td>${q_cell(o.question, o.url, o.reasoning ? o.reasoning.slice(0,80)+'…' : '')}</td>
+      <td style="color:var(--muted)">${esc(o.category || 'other')}</td>
       <td><b>${esc(o.recommended_outcome)}</b></td>
       <td>${edge_bar(o.edge)}</td>
       <td>${pill_conf(o.confidence)}</td>
@@ -501,6 +505,7 @@ function renderValidation() {
 
   const byConf = perf.by_confidence || {};
   const byEdge = perf.by_edge_bucket || {};
+  const byCat = perf.by_category || {};
   const cal_bar = (wr, color) => `<div class="cal-bar-wrap"><div class="cal-bar" style="width:${Math.min(wr*100,100).toFixed(0)}%;background:${color}"></div></div>`;
 
   document.getElementById('val-calibration').innerHTML = `
@@ -526,6 +531,18 @@ function renderValidation() {
           <span class="cal-label">${esc(bucket)}</span>
           ${cal_bar(s.win_rate||0, color)}
           <span class="cal-val" style="color:${color}">${((s.win_rate||0)*100).toFixed(0)}%</span>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="cal-section">
+      <h4>By Category</h4>
+      ${Object.entries(byCat).map(([category, s]) => {
+        if (!s.count) return '';
+        const color = s.win_rate >= 0.58 ? 'var(--win)' : s.win_rate >= 0.5 ? 'var(--warn)' : 'var(--loss)';
+        return `<div class="cal-row">
+          <span class="cal-label">${esc(category)}</span>
+          ${cal_bar(s.win_rate||0, color)}
+          <span class="cal-val" style="color:${color}">${((s.win_rate||0)*100).toFixed(0)}% (${s.count})</span>
         </div>`;
       }).join('')}
     </div>`;

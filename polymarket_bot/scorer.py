@@ -8,11 +8,63 @@ from typing import Any
 import requests
 
 try:
-    from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_REASONER_MODEL, DEEPSEEK_URL
+    from .config import (
+        DEEPSEEK_API_KEY,
+        DEEPSEEK_MODEL,
+        DEEPSEEK_REASONER_MODEL,
+        DEEPSEEK_URL,
+        DEEPSEEK_PRICING,
+    )
 except ImportError:  # pragma: no cover
-    from config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_REASONER_MODEL, DEEPSEEK_URL
+    from config import (
+        DEEPSEEK_API_KEY,
+        DEEPSEEK_MODEL,
+        DEEPSEEK_REASONER_MODEL,
+        DEEPSEEK_URL,
+        DEEPSEEK_PRICING,
+    )
 
 LOGGER = logging.getLogger("scorer")
+
+
+_TOKEN_USAGE = {
+    "calls": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "cost_usd": 0.0,
+}
+
+
+def reset_token_usage() -> None:
+    """Zero the per-run token accountant. Call once at the start of a scan."""
+    _TOKEN_USAGE.update(
+        {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cost_usd": 0.0}
+    )
+
+
+def get_token_usage() -> dict[str, Any]:
+    """Return a snapshot of DeepSeek token usage and estimated cost so far."""
+    snapshot = dict(_TOKEN_USAGE)
+    snapshot["cost_usd"] = round(snapshot["cost_usd"], 6)
+    return snapshot
+
+
+def _record_usage(model: str, usage: dict[str, Any] | None) -> None:
+    if not usage:
+        return
+    prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+    completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+    pricing = DEEPSEEK_PRICING.get(model, DEEPSEEK_PRICING.get(DEEPSEEK_MODEL, {}))
+    cost = (
+        prompt_tokens / 1_000_000 * pricing.get("input", 0.0)
+        + completion_tokens / 1_000_000 * pricing.get("output", 0.0)
+    )
+    _TOKEN_USAGE["calls"] += 1
+    _TOKEN_USAGE["prompt_tokens"] += prompt_tokens
+    _TOKEN_USAGE["completion_tokens"] += completion_tokens
+    _TOKEN_USAGE["total_tokens"] += prompt_tokens + completion_tokens
+    _TOKEN_USAGE["cost_usd"] += cost
 
 
 def _build_user_message(market: dict, news: list[dict]) -> str:
@@ -20,9 +72,19 @@ def _build_user_message(market: dict, news: list[dict]) -> str:
         f"  {outcome}: current price {price:.2f} (implied probability {price * 100:.1f}%)"
         for outcome, price in zip(market["outcomes"], market["prices"])
     )
-    news_str = "\n\n".join(
-        f"[{item['published_date']}] {item['title']}\n{item['snippet']}" for item in news
-    ) or "No recent news found."
+
+    def _format(items: list[dict]) -> str:
+        return "\n\n".join(
+            f"[{item.get('published_date', '')}] {item.get('title', '')}\n{item.get('snippet', '')}"
+            for item in items
+        )
+
+    supporting = [n for n in news if n.get("stance") != "counter"]
+    counter = [n for n in news if n.get("stance") == "counter"]
+    supporting_str = _format(supporting) or "No recent news found."
+    counter_str = _format(counter) or "No specific counter-evidence found."
+
+    category = market.get("category", "other")
 
     days_remaining = ""
     try:
@@ -38,6 +100,7 @@ def _build_user_message(market: dict, news: list[dict]) -> str:
 
     return f"""
 Market: {market['question']}
+Category: {category}
 End date: {market['end_date']}
 Volume traded: ${market['volume']:,.0f}
 URL: {market['url']}
@@ -45,12 +108,16 @@ URL: {market['url']}
 Current outcome prices:
 {outcomes_str}
 
-Recent news (last 3 days):
-{news_str}
+Recent supporting news:
+{supporting_str}
+
+Counter-evidence (reasons the favoured outcome may NOT happen):
+{counter_str}
 
 {days_remaining}
 
-Analyze whether any outcome is mispriced given this news.
+Analyze whether any outcome is mispriced. Weigh the counter-evidence seriously:
+if it materially undercuts the case, lower your confidence or decline to bet.
 Return ONLY a valid JSON object, no markdown, no explanation outside the JSON:
 
 {{
@@ -62,6 +129,7 @@ Return ONLY a valid JSON object, no markdown, no explanation outside the JSON:
   "confidence": "<low|medium|high>",
   "reasoning": "<2-3 sentence max>",
   "news_supports_bet": <true|false>,
+  "counter_evidence_considered": <true|false>,
   "token_id": null
 }}
 
@@ -98,7 +166,9 @@ def _call_deepseek(user_message: str, model: str) -> dict[str, Any] | None:
                     time.sleep(5)
                     continue
                 response.raise_for_status()
-            raw = response.json()["choices"][0]["message"]["content"].strip()
+            body = response.json()
+            _record_usage(model, body.get("usage"))
+            raw = body["choices"][0]["message"]["content"].strip()
             clean = raw.strip()
             if clean.startswith("```"):
                 clean = clean.split("```")[1]
@@ -131,8 +201,10 @@ def _neutral_score(market: dict, reason: str) -> dict[str, Any]:
         "confidence": "low",
         "reasoning": reason,
         "news_supports_bet": False,
+        "counter_evidence_considered": False,
         "token_id": None,
         "condition_id": market["condition_id"],
+        "category": market.get("category", "other"),
         "outcome_index": None,
     }
 
@@ -166,8 +238,10 @@ def _coerce_score(market: dict, score: dict[str, Any]) -> dict[str, Any]:
             "confidence": str(normalized.get("confidence") or "low").lower(),
             "reasoning": str(normalized.get("reasoning") or ""),
             "news_supports_bet": bool(normalized.get("news_supports_bet", False)),
+            "counter_evidence_considered": bool(normalized.get("counter_evidence_considered", False)),
             "token_id": normalized.get("token_id"),
             "condition_id": market["condition_id"],
+            "category": market.get("category", "other"),
             "outcome_index": index,
         }
     )

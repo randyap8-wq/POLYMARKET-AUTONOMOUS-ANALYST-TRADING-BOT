@@ -15,9 +15,10 @@ The implementation lives under `polymarket_bot/`.
 | File | Purpose |
 | --- | --- |
 | `config.py` | Environment, paths, and tunable filters/thresholds. |
-| `fetcher.py` | Fetches and filters active markets from the Gamma API (paginated, up to 150). |
-| `news.py` | Tavily news search per market. |
-| `scorer.py` | DeepSeek fair-value scoring with a reasoner second opinion. |
+| `fetcher.py` | Fetches and filters active markets from the Gamma API (paginated, up to 150); tags each with a `category` field and drops disabled categories. |
+| `categories.py` | Keyword-based market categorisation used for breakdowns and filtering. |
+| `news.py` | Tavily news search per market with a dynamic time window plus a counter-evidence query. |
+| `scorer.py` | DeepSeek fair-value scoring with a reasoner second opinion and per-run token-cost tracking. |
 | `report.py` | Builds, saves, and prints the opportunities report (`report.json`). |
 | `trader.py` | Places real/dry-run orders via the CLOB client. |
 | `wallet.py` | Builds the authenticated CLOB client. |
@@ -48,6 +49,10 @@ Set these in `polymarket_bot/.env`:
 - `POLYGON_PRIVATE_KEY` / `POLYGON_WALLET_ADDRESS` — required for live trading.
 - `MAX_BET_USDC` (default `10`), `MIN_EDGE` (default `0.07`),
   `MIN_CONFIDENCE` (default `medium`), `DRY_RUN` (default `true`).
+- Signal tuning (all optional): `NEWS_WINDOW_MIN_DAYS` / `NEWS_WINDOW_MAX_DAYS`
+  (dynamic news window), `COUNTER_EVIDENCE` (counter-evidence query, default `true`),
+  `MIN_PRICE` / `MAX_PRICE` (extreme-price guard), and `DISABLED_CATEGORIES`
+  (comma-separated categories to skip).
 
 ## CLI modes
 
@@ -124,15 +129,26 @@ Requires `fastapi` and `uvicorn` (included in `requirements.txt`).
    win rate, P&L, calibration by confidence/edge bucket, and a go-live
    recommendation. Wait for 30+ resolved bets before drawing conclusions.
 
-## Further signal improvements (optional / future)
+## Signal improvements (implemented)
 
-These are described in the upgrade spec and can be layered on once the core
-pipeline is validated:
+These signal-quality features are built into the pipeline and tuned via the
+environment variables above:
 
-- Widen the news search window dynamically for slower-moving markets.
-- Add a counter-evidence Tavily query per market to reduce overconfidence.
-- Track DeepSeek token cost per run.
-- Add a `market_category` field and use it to disable weak categories.
+- **Dynamic news window** — the Tavily search window widens for slower-moving
+  markets (those closing further out) and stays tight for fast-moving ones
+  (`NEWS_WINDOW_MIN_DAYS` / `NEWS_WINDOW_MAX_DAYS`).
+- **Counter-evidence query** — a second, negation-focused Tavily query per market
+  feeds the scorer so it weighs reasons the favoured outcome may *not* happen,
+  reducing overconfidence (`COUNTER_EVIDENCE`).
+- **DeepSeek token-cost tracking** — every scan records prompt/completion tokens
+  and an estimated USD cost (shown in the summary, `report.json`, and dashboard).
+- **Market categories** — each market is tagged with a `category`; weak
+  categories can be disabled via `DISABLED_CATEGORIES`, and `--validate` reports
+  win rate per category.
+- **Extreme-price guard** — opportunities at very low/high prices (noisy edge,
+  poor risk/reward) are filtered out (`MIN_PRICE` / `MAX_PRICE`).
+- **Kelly sizing hint** — each opportunity includes a conservative half-Kelly
+  stake fraction as an informational sizing guide.
 
 ## Tests
 

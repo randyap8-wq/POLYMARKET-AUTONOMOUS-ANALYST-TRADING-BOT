@@ -41,13 +41,13 @@ def main():
         from .fetcher       import fetch_markets
         from .news          import fetch_news
         from .report        import build_report, print_summary, save_report
-        from .scorer        import score_market
+        from .scorer        import score_market, reset_token_usage, get_token_usage
         from .paper_trader  import check_resolutions, record_paper_bet
     except ImportError:
         from fetcher       import fetch_markets
         from news          import fetch_news
         from report        import build_report, print_summary, save_report
-        from scorer        import score_market
+        from scorer        import score_market, reset_token_usage, get_token_usage
         from paper_trader  import check_resolutions, record_paper_bet
 
     def run():
@@ -56,20 +56,21 @@ def main():
         if newly_resolved:
             print(f"[paper] {newly_resolved} bet(s) resolved since last run")
 
+        reset_token_usage()
         markets = fetch_markets()
         print(f"[fetcher] {len(markets)} markets after filtering")
 
         scored = []
         for market in markets:
             try:
-                news  = fetch_news(market["question"])
+                news  = fetch_news(market["question"], market.get("end_date"))
                 score = score_market(market, news)
                 if score:
                     scored.append({**market, **score, "top_news": news[:3]})
             except Exception as exc:
                 print(f"[error] {market['question'][:60]}: {exc}", file=sys.stderr)
 
-        report = build_report(markets, scored)
+        report = build_report(markets, scored, token_usage=get_token_usage())
         save_report(report)
         print_summary(report)
 

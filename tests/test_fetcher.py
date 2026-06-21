@@ -60,6 +60,47 @@ class FetchMarketsTests(unittest.TestCase):
         self.assertEqual(markets[0]["condition_id"], "cond-1")
         self.assertEqual(markets[0]["prices"], [0.45, 0.55])
         self.assertEqual(markets[0]["url"], "https://polymarket.com/event/keep-me")
+        self.assertIn("category", markets[0])
+
+    @patch("polymarket_bot.fetcher.requests.get")
+    @patch("polymarket_bot.fetcher.datetime", wraps=datetime)
+    def test_disabled_categories_are_dropped(self, mock_datetime, mock_get):
+        fixed_now = datetime(2026, 6, 21, tzinfo=timezone.utc)
+        future = (fixed_now + timedelta(days=5)).isoformat()
+        payload = [
+            {
+                "id": "crypto-mkt",
+                "conditionId": "cond-1",
+                "question": "Will Bitcoin hit $100k?",
+                "outcomes": json.dumps(["Yes", "No"]),
+                "outcomePrices": json.dumps(["0.45", "0.55"]),
+                "volume": "20000",
+                "endDate": future,
+                "slug": "btc",
+            },
+            {
+                "id": "politics-mkt",
+                "conditionId": "cond-2",
+                "question": "Who wins the presidential election?",
+                "outcomes": json.dumps(["A", "B"]),
+                "outcomePrices": json.dumps(["0.5", "0.5"]),
+                "volume": "20000",
+                "endDate": future,
+                "slug": "election",
+            },
+        ]
+        mock_response = Mock()
+        mock_response.json.return_value = payload
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+        mock_datetime.now.return_value = fixed_now
+
+        with patch("polymarket_bot.fetcher.DISABLED_CATEGORIES", {"crypto"}):
+            markets = fetch_markets()
+
+        ids = {m["id"] for m in markets}
+        self.assertNotIn("crypto-mkt", ids)
+        self.assertIn("politics-mkt", ids)
 
 
 if __name__ == "__main__":
