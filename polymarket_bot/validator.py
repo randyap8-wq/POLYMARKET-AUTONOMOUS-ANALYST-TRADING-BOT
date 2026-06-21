@@ -81,7 +81,7 @@ def generate_performance_report() -> dict:
         recommendations.append(f"⏳ Only {total}/30 resolved bets — keep running before drawing conclusions.")
     else:
         if win_rate >= 0.60:
-            recommendations.append("✅ SIGNAL VALIDATED — win rate >60% on 30+ bets. Consider going live with MIN_BET_USDC=2.")
+            recommendations.append("✅ SIGNAL VALIDATED — win rate >60% on 30+ bets. Consider going live with MAX_BET_USDC=2.")
         elif win_rate >= 0.53:
             recommendations.append("⚠️  MARGINAL SIGNAL — win rate 53-60%. Go live only with minimum stake ($2).")
         else:

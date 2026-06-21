@@ -26,7 +26,9 @@ def fetch_markets() -> list[dict]:
     all_raw: list[dict] = []
     seen_ids: set[str] = set()
 
-    for offset in [0, 50, 100]:
+    limit = MARKET_FILTERS["limit"]
+    pages = 3
+    for offset in range(0, limit * pages, limit):
         try:
             response = requests.get(
                 f"{GAMMA_BASE}/markets",

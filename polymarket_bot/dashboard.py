@@ -319,9 +319,15 @@ function fmt_pnl(v) {
   const s = v >= 0 ? `+$${v.toFixed(2)}` : `-$${Math.abs(v).toFixed(2)}`;
   return `<span style="color:${v >= 0 ? 'var(--win)' : 'var(--loss)'}">${s}</span>`;
 }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function safeUrl(u){ if (!u) return '#'; try { const x = new URL(u, location.origin); return (x.protocol==='http:'||x.protocol==='https:') ? x.href : '#'; } catch(e){ return '#'; } }
 function fmt_pct(v) { return v != null ? (v * 100).toFixed(1) + '%' : '—'; }
 function fmt_price(v) { return v != null ? '$' + (+v).toFixed(2) : '—'; }
-function pill_conf(c) { return `<span class="pill pill-${c||'low'}">${c||'low'}</span>`; }
+function pill_conf(c) {
+  const level = String(c || 'low');
+  const cls = ['high','medium','low'].includes(level) ? level : 'low';
+  return `<span class="pill pill-${cls}">${esc(level)}</span>`;
+}
 function pill_status(s, correct) {
   if (s === 'pending') return `<span class="pill pill-pending">pending</span>`;
   return correct ? `<span class="pill pill-win">✓ correct</span>` : `<span class="pill pill-loss">✗ wrong</span>`;
@@ -331,7 +337,7 @@ function edge_bar(e) {
   return `<div class="edge-bar"><div class="edge-track"><div class="edge-fill" style="width:${pct}%"></div></div><span style="font-family:var(--mono);font-size:12px;color:var(--accent)">${(+(e||0)).toFixed(2)}</span></div>`;
 }
 function q_cell(q, url, sub) {
-  return `<div class="q-cell"><div class="q-text"><a href="${url||'#'}" target="_blank">${q||''}</a></div>${sub ? `<div class="q-sub">${sub}</div>` : ''}</div>`;
+  return `<div class="q-cell"><div class="q-text"><a href="${safeUrl(url)}" target="_blank" rel="noopener noreferrer">${esc(q)}</a></div>${sub ? `<div class="q-sub">${esc(sub)}</div>` : ''}</div>`;
 }
 function stat_card(label, value, cls, sub) {
   return `<div class="stat-card"><div class="stat-label">${label}</div><div class="stat-value ${cls||''}">${value}</div>${sub ? `<div class="stat-sub">${sub}</div>` : ''}</div>`;
@@ -369,7 +375,7 @@ function renderOverview() {
     <tr><th>Market</th><th>Outcome</th><th>Edge</th><th>Confidence</th><th>Price</th></tr>
     ${opps.map(o => `<tr>
       <td>${q_cell(o.question, o.url, o.end_date ? 'Closes ' + o.end_date.slice(0,10) : '')}</td>
-      <td><b>${o.recommended_outcome||''}</b></td>
+      <td><b>${esc(o.recommended_outcome)}</b></td>
       <td>${edge_bar(o.edge)}</td>
       <td>${pill_conf(o.confidence)}</td>
       <td style="font-family:var(--mono)">${fmt_price(o.current_price)} → ${fmt_price(o.fair_value_estimate)}</td>
@@ -389,9 +395,9 @@ function renderOpportunities() {
   document.getElementById('opps-table').innerHTML = `<table>
     <tr><th>#</th><th>Market</th><th>Outcome</th><th>Edge</th><th>Confidence</th><th>Current Price</th><th>Fair Value</th><th>Volume</th></tr>
     ${opps.map(o => `<tr>
-      <td style="color:var(--muted);font-family:var(--mono)">#${o.rank}</td>
+      <td style="color:var(--muted);font-family:var(--mono)">#${esc(o.rank)}</td>
       <td>${q_cell(o.question, o.url, o.reasoning ? o.reasoning.slice(0,80)+'…' : '')}</td>
-      <td><b>${o.recommended_outcome||''}</b></td>
+      <td><b>${esc(o.recommended_outcome)}</b></td>
       <td>${edge_bar(o.edge)}</td>
       <td>${pill_conf(o.confidence)}</td>
       <td style="font-family:var(--mono)">${fmt_price(o.current_price)}</td>
@@ -422,9 +428,9 @@ function renderPaper() {
   document.getElementById('paper-table').innerHTML = `<table>
     <tr><th>Recorded</th><th>Market</th><th>Outcome</th><th>Edge</th><th>Confidence</th><th>Price</th><th>Stake</th></tr>
     ${pending.map(b => `<tr>
-      <td style="color:var(--muted);font-size:11px;white-space:nowrap">${b.recorded_at ? b.recorded_at.slice(0,16).replace('T',' ') : '—'}</td>
+      <td style="color:var(--muted);font-size:11px;white-space:nowrap">${esc(b.recorded_at ? b.recorded_at.slice(0,16).replace('T',' ') : '—')}</td>
       <td>${q_cell(b.question, b.url, 'Closes ' + (b.end_date||'').slice(0,10))}</td>
-      <td><b>${b.recommended_outcome||''}</b></td>
+      <td><b>${esc(b.recommended_outcome)}</b></td>
       <td>${edge_bar(b.edge)}</td>
       <td>${pill_conf(b.confidence)}</td>
       <td style="font-family:var(--mono)">${fmt_price(b.current_price)}</td>
@@ -456,10 +462,10 @@ function renderResolved() {
   document.getElementById('resolved-table').innerHTML = `<table>
     <tr><th>Resolved</th><th>Market</th><th>Predicted</th><th>Actual</th><th>Result</th><th>P&L</th><th>Edge</th></tr>
     ${sorted.map(b => `<tr>
-      <td style="color:var(--muted);font-size:11px;white-space:nowrap">${(b.resolved_at||'').slice(0,10)}</td>
+      <td style="color:var(--muted);font-size:11px;white-space:nowrap">${esc((b.resolved_at||'').slice(0,10))}</td>
       <td>${q_cell(b.question, b.url)}</td>
-      <td style="font-family:var(--mono)">${b.recommended_outcome||'—'}</td>
-      <td style="font-family:var(--mono)">${b.resolved_outcome||'—'}</td>
+      <td style="font-family:var(--mono)">${esc(b.recommended_outcome || '—')}</td>
+      <td style="font-family:var(--mono)">${esc(b.resolved_outcome || '—')}</td>
       <td>${pill_status(b.status, b.correct)}</td>
       <td style="font-family:var(--mono)">${fmt_pnl(b.pnl_usdc)}</td>
       <td style="font-family:var(--mono);color:var(--accent)">${(+(b.edge||0)).toFixed(2)}</td>
@@ -489,7 +495,7 @@ function renderValidation() {
   document.getElementById('val-recs').innerHTML = recs.length
     ? recs.map(r => {
         const cls = r.startsWith('✅') ? 'rec-ok' : r.startsWith('❌') ? 'rec-bad' : r.startsWith('⚠') ? 'rec-warn' : 'rec-info';
-        return `<div class="rec ${cls}">${r}</div>`;
+        return `<div class="rec ${cls}">${esc(r)}</div>`;
       }).join('')
     : '<p style="color:var(--muted);padding:4px">No recommendations yet.</p>';
 
@@ -517,7 +523,7 @@ function renderValidation() {
         if (!s.count) return '';
         const color = s.win_rate >= 0.58 ? 'var(--win)' : s.win_rate >= 0.5 ? 'var(--warn)' : 'var(--loss)';
         return `<div class="cal-row">
-          <span class="cal-label">${bucket}</span>
+          <span class="cal-label">${esc(bucket)}</span>
           ${cal_bar(s.win_rate||0, color)}
           <span class="cal-val" style="color:${color}">${((s.win_rate||0)*100).toFixed(0)}%</span>
         </div>`;
@@ -528,20 +534,20 @@ function renderValidation() {
 function renderTrades() {
   const trades = DATA.trades || [];
   if (!trades.length) {
-    document.getElementById('trades-table').innerHTML = empty_state('No trades logged yet. Trades appear when running --trade or --paper mode.');
+    document.getElementById('trades-table').innerHTML = empty_state('No trades logged yet. Trades appear when running --trade mode (live or dry-run).');
     return;
   }
   const sorted = [...trades].sort((a, b) => new Date(b.timestamp||0) - new Date(a.timestamp||0));
   document.getElementById('trades-table').innerHTML = `<table>
     <tr><th>Time</th><th>Market</th><th>Outcome</th><th>Price</th><th>USDC</th><th>Tokens</th><th>Status</th></tr>
     ${sorted.map(t => `<tr>
-      <td style="color:var(--muted);font-size:11px;white-space:nowrap">${(t.timestamp||'').slice(0,16).replace('T',' ')}</td>
+      <td style="color:var(--muted);font-size:11px;white-space:nowrap">${esc((t.timestamp||'').slice(0,16).replace('T',' '))}</td>
       <td>${q_cell(t.question)}</td>
-      <td><b>${t.outcome||''}</b></td>
+      <td><b>${esc(t.outcome)}</b></td>
       <td style="font-family:var(--mono)">${fmt_price(t.price)}</td>
       <td style="font-family:var(--mono)">$${(+(t.usdc_spent||0)).toFixed(2)}</td>
       <td style="font-family:var(--mono)">${(+(t.tokens_bought||0)).toFixed(1)}</td>
-      <td><span class="pill ${t.status==='dry_run'?'pill-pending':t.status==='filled'?'pill-win':'pill-loss'}">${t.status||'—'}</span></td>
+      <td><span class="pill ${t.status==='dry_run'?'pill-pending':t.status==='filled'?'pill-win':'pill-loss'}">${esc(t.status || '—')}</span></td>
     </tr>`).join('')}
   </table>`;
 }
@@ -592,7 +598,7 @@ def create_app():
     return app
 
 
-def run_dashboard(host: str = "0.0.0.0", port: int = 8080):
+def run_dashboard(host: str = "127.0.0.1", port: int = 8080):
     try:
         import uvicorn
     except ImportError as exc:

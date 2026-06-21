@@ -23,7 +23,10 @@ DATA_DIR.mkdir(exist_ok=True)
 
 
 def record_paper_bet(market: dict, score: dict, news: list[dict]) -> dict:
-    """Write a hypothetical bet to paper_bets.jsonl. Never overwrites existing lines."""
+    """
+    Append a hypothetical bet to paper_bets.jsonl.
+    check_resolutions may later rewrite the file in place to update statuses.
+    """
     current_price = float(score.get("current_price") or 0.01)
     usdc = 10.0  # fixed paper stake
     tokens = round(usdc / max(current_price, 0.01), 2)
@@ -78,6 +81,7 @@ def _load_paper_bets() -> list[dict]:
 
 
 def _rewrite_paper_bets(bets: list[dict]) -> None:
+    # Rewrite statuses in place so pending views do not need to re-derive state.
     with PAPER_BETS_PATH.open("w", encoding="utf-8") as fh:
         for bet in bets:
             fh.write(json.dumps(bet) + "\n")
