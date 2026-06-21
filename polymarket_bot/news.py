@@ -100,11 +100,11 @@ def fetch_news(
 
     counter: list[dict] = []
     if counter_evidence:
-        counter_query = (
-            f"{question} unlikely OR \"will not\" OR fails OR delayed OR "
-            f"denied OR evidence against"
-        )
-        counter = _normalize(_search(client, counter_query, days, max_results=4)[:2], "counter")
+        # Targeted negation: strip the trailing "?" and ask the opposite framing.
+        # Cleaner search intent than chaining skepticism terms with OR.
+        base = question.rstrip("?").strip()
+        counter_query = f"reasons why NOT: {base}"
+        counter = _normalize(_search(client, counter_query, days, max_results=3)[:2], "counter")
 
     # Merge, de-duplicating by URL while keeping supporting items first.
     merged: list[dict] = []

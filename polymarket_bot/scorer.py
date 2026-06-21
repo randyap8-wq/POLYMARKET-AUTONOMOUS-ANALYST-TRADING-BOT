@@ -152,7 +152,7 @@ def _call_deepseek(user_message: str, model: str) -> dict[str, Any] | None:
             {"role": "user", "content": user_message},
         ],
         "temperature": 0.1,
-        "max_tokens": 400,
+        "max_tokens": 600,
     }
 
     last_error: Exception | None = None
