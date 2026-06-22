@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from polymarket_bot import scorer
 from polymarket_bot.scorer import (
@@ -108,6 +108,26 @@ class ScoreMarketTests(unittest.TestCase):
     @patch.object(scorer, "_call_gemini", return_value=None)
     def test_returns_none_when_call_fails(self, _mock_call):
         self.assertIsNone(score_market(MARKET))
+
+    @patch.object(scorer, "GEMINI_USE_SEARCH", False)
+    @patch.object(scorer, "_rate_limit_sleep")
+    @patch("polymarket_bot.scorer.time.sleep")
+    @patch.object(scorer, "_get_client")
+    def test_rate_limit_applied_even_when_parse_fails(self, mock_client_fn, _mock_time_sleep, mock_rl):
+        client = Mock()
+        bad = Mock()
+        bad.text = "not json"
+        bad.usage_metadata = None
+        good = Mock()
+        good.text = '{"edge": 0.1, "recommended_outcome": "Yes"}'
+        good.usage_metadata = None
+        client.models.generate_content.side_effect = [bad, good]
+        mock_client_fn.return_value = client
+
+        result = scorer._call_gemini("prompt")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(mock_rl.call_count, 2)
 
 
 class TokenUsageTests(unittest.TestCase):

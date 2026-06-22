@@ -619,11 +619,18 @@ def create_app():
     return app
 
 
-def run_dashboard(host: str = "0.0.0.0", port: int = 8080):
+def run_dashboard(host: str = "127.0.0.1", port: int = 8080):
     try:
         import uvicorn
     except ImportError as exc:
         raise ImportError("Install uvicorn: pip install uvicorn") from exc
     app = create_app()
     LOGGER.info("Dashboard running at http://%s:%s", host, port)
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        LOGGER.warning(
+            "Dashboard bound to %s: the API (including /api/all report/trade logs) is "
+            "UNAUTHENTICATED and reachable from the network. Restrict it with a firewall/"
+            "reverse proxy/auth, or bind to 127.0.0.1.",
+            host,
+        )
     uvicorn.run(app, host=host, port=port, log_level="warning")
