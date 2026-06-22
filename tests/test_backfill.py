@@ -88,7 +88,6 @@ class BackfillTests(unittest.TestCase):
 
         with (
             patch("polymarket_bot.backfill._fetch_recently_closed", return_value=[market]),
-            patch("polymarket_bot.backfill.fetch_news", return_value=[]),
             patch("polymarket_bot.backfill.score_market", return_value=score),
             patch("polymarket_bot.backfill.reset_token_usage", return_value=None),
         ):
@@ -122,7 +121,6 @@ class BackfillTests(unittest.TestCase):
 
         with (
             patch("polymarket_bot.backfill._fetch_recently_closed", return_value=[market]),
-            patch("polymarket_bot.backfill.fetch_news", return_value=[]),
             patch("polymarket_bot.backfill.score_market", return_value=score),
             patch("polymarket_bot.backfill.reset_token_usage", return_value=None),
         ):

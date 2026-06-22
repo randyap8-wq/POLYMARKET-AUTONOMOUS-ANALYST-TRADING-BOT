@@ -5,6 +5,9 @@ polymarket_bot/logs/trades.jsonl
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.venv/
+venv/
 polymarket_bot/data/paper_bets.jsonl
 polymarket_bot/data/resolved.jsonl
 polymarket_bot/data/performance.json
+polymarket_bot/data/backtest.json

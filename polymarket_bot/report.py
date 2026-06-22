@@ -12,6 +12,7 @@ try:
         MIN_PRICE,
         MAX_PRICE,
     )
+    from .risk import size_positions
 except ImportError:  # pragma: no cover
     from config import (
         CONFIDENCE_RANK,
@@ -21,6 +22,7 @@ except ImportError:  # pragma: no cover
         MIN_PRICE,
         MAX_PRICE,
     )
+    from risk import size_positions
 
 
 def _kelly_fraction(price: float, fair_value: float) -> float:
@@ -51,6 +53,10 @@ def build_report(all_markets, scored_results, token_usage: dict | None = None) -
     ]
     opportunities.sort(key=lambda item: item["edge"], reverse=True)
 
+    # Systematic risk controls: size each position honouring portfolio,
+    # category, concurrency and drawdown limits.
+    opportunities, portfolio_summary = size_positions(opportunities)
+
     report_items = []
     for index, item in enumerate(opportunities, start=1):
         report_items.append(
@@ -63,11 +69,20 @@ def build_report(all_markets, scored_results, token_usage: dict | None = None) -
                 "current_price": item["current_price"],
                 "fair_value_estimate": item["fair_value_estimate"],
                 "edge": item["edge"],
+                "ai_edge": item.get("ai_edge"),
+                "quant_edge": item.get("quant_edge"),
+                "quant_score": item.get("quant_score"),
+                "agreement": item.get("agreement"),
+                "blended_fair_value": item.get("blended_fair_value"),
                 "confidence": item["confidence"],
                 "kelly_fraction": _kelly_fraction(
                     float(item.get("current_price") or 0.0),
                     float(item.get("fair_value_estimate") or 0.0),
                 ),
+                "stake_usdc": item.get("stake_usdc", 0.0),
+                "vol_factor": item.get("vol_factor"),
+                "volatility": item.get("volatility"),
+                "liquidity_usdc": item.get("quant", {}).get("liquidity_usdc") if isinstance(item.get("quant"), dict) else None,
                 "counter_evidence_considered": bool(item.get("counter_evidence_considered", False)),
                 "reasoning": item["reasoning"],
                 "top_news": [
@@ -91,6 +106,7 @@ def build_report(all_markets, scored_results, token_usage: dict | None = None) -
         "markets_scored": len(scored_results),
         "opportunities_found": len(report_items),
         "token_usage": token_usage or {},
+        "portfolio": portfolio_summary,
         "opportunities": report_items,
     }
 
@@ -107,13 +123,21 @@ def print_summary(report: dict) -> None:
     print(f" Scanned : {report['markets_scanned']} markets")
     print(f" Scored  : {report['markets_scored']} markets")
     print(f" Picks   : {report['opportunities_found']} opportunities")
+    portfolio = report.get("portfolio") or {}
+    if portfolio:
+        print(
+            f" Sizing  : ${portfolio.get('total_exposure_usdc', 0):.0f} exposure across "
+            f"{portfolio.get('positions_sized', 0)} sized "
+            f"(drawdown x{portfolio.get('drawdown_factor', 1.0)})"
+        )
     print()
-    print(" RANK  EDGE    CONF    OUTCOME   QUESTION")
-    print(" ----  ------  ------  --------  ---------------------------------")
+    print(" RANK  EDGE    CONF    AGREE      STAKE   OUTCOME   QUESTION")
+    print(" ----  ------  ------  ---------  ------  --------  -----------------------")
     for item in report["opportunities"]:
         print(
             f"  #{item['rank']:<1}   +{item['edge']:.2f}   {item['confidence']:<6}  "
-            f"{item['recommended_outcome']:<8}  {item['question'][:33]}"
+            f"{str(item.get('agreement') or '-'):<9}  ${item.get('stake_usdc', 0):<5.1f}  "
+            f"{str(item['recommended_outcome']):<8}  {item['question'][:30]}"
         )
     print()
     usage = report.get("token_usage") or {}

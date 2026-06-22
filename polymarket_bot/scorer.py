@@ -1,31 +1,43 @@
+"""AI market scorer backed by Gemini with built-in Google Search grounding.
+
+This replaces the previous DeepSeek (LLM) + Tavily (news) stack. A single
+Gemini call retrieves its own news via Google Search grounding and returns a
+fair-value estimate, so there is no separate ``fetch_news`` step and zero paid
+API cost on the free tier.
+"""
+
 from __future__ import annotations
 
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any
-
-import requests
 
 try:
     from .config import (
-        DEEPSEEK_API_KEY,
-        DEEPSEEK_MODEL,
-        DEEPSEEK_REASONER_MODEL,
-        DEEPSEEK_URL,
-        DEEPSEEK_PRICING,
+        GEMINI_API_KEY,
+        GEMINI_MODEL,
+        GEMINI_MODEL_PRO,
+        GEMINI_PRICING,
+        GEMINI_PRO_RECHECK,
+        GEMINI_RPM,
+        GEMINI_USE_SEARCH,
     )
 except ImportError:  # pragma: no cover
     from config import (
-        DEEPSEEK_API_KEY,
-        DEEPSEEK_MODEL,
-        DEEPSEEK_REASONER_MODEL,
-        DEEPSEEK_URL,
-        DEEPSEEK_PRICING,
+        GEMINI_API_KEY,
+        GEMINI_MODEL,
+        GEMINI_MODEL_PRO,
+        GEMINI_PRICING,
+        GEMINI_PRO_RECHECK,
+        GEMINI_RPM,
+        GEMINI_USE_SEARCH,
     )
 
 LOGGER = logging.getLogger("scorer")
 
+_client = None
 
 _TOKEN_USAGE = {
     "calls": 0,
@@ -36,6 +48,15 @@ _TOKEN_USAGE = {
 }
 
 
+def _get_client():
+    global _client
+    if _client is None:
+        from google import genai
+
+        _client = genai.Client(api_key=GEMINI_API_KEY)
+    return _client
+
+
 def reset_token_usage() -> None:
     """Zero the per-run token accountant. Call once at the start of a scan."""
     _TOKEN_USAGE.update(
@@ -44,22 +65,36 @@ def reset_token_usage() -> None:
 
 
 def get_token_usage() -> dict[str, Any]:
-    """Return a snapshot of DeepSeek token usage and estimated cost so far."""
+    """Return a snapshot of Gemini token usage and estimated cost so far."""
     snapshot = dict(_TOKEN_USAGE)
     snapshot["cost_usd"] = round(snapshot["cost_usd"], 6)
     return snapshot
 
 
-def _record_usage(model: str, usage: dict[str, Any] | None) -> None:
+def _record_usage(model: str, usage: Any) -> None:
+    """Accumulate token counts and (optional) cost from a Gemini response.
+
+    ``usage`` may be a ``usage_metadata`` object (live SDK) or a plain dict
+    (tests). On the Flash free tier the configured price is 0, so ``cost_usd``
+    stays 0 — but the accounting is wired up for paid Vertex keys.
+    """
     if not usage:
         return
-    prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
-    completion_tokens = int(usage.get("completion_tokens", 0) or 0)
-    pricing = DEEPSEEK_PRICING.get(model, DEEPSEEK_PRICING.get(DEEPSEEK_MODEL, {}))
+
+    def _get(name: str) -> int:
+        if isinstance(usage, dict):
+            return int(usage.get(name, 0) or 0)
+        return int(getattr(usage, name, 0) or 0)
+
+    prompt_tokens = _get("prompt_token_count") or _get("prompt_tokens")
+    completion_tokens = _get("candidates_token_count") or _get("completion_tokens")
+
+    pricing = GEMINI_PRICING.get(model, GEMINI_PRICING.get(GEMINI_MODEL, {}))
     cost = (
         prompt_tokens / 1_000_000 * pricing.get("input", 0.0)
         + completion_tokens / 1_000_000 * pricing.get("output", 0.0)
     )
+
     _TOKEN_USAGE["calls"] += 1
     _TOKEN_USAGE["prompt_tokens"] += prompt_tokens
     _TOKEN_USAGE["completion_tokens"] += completion_tokens
@@ -67,127 +102,120 @@ def _record_usage(model: str, usage: dict[str, Any] | None) -> None:
     _TOKEN_USAGE["cost_usd"] += cost
 
 
-def _build_user_message(market: dict, news: list[dict]) -> str:
-    outcomes_str = "\n".join(
-        f"  {outcome}: current price {price:.2f} (implied probability {price * 100:.1f}%)"
-        for outcome, price in zip(market["outcomes"], market["prices"])
-    )
-
-    def _format(items: list[dict]) -> str:
-        return "\n\n".join(
-            f"[{item.get('published_date', '')}] {item.get('title', '')}\n{item.get('snippet', '')}"
-            for item in items
-        )
-
-    supporting = [n for n in news if n.get("stance") != "counter"]
-    counter = [n for n in news if n.get("stance") == "counter"]
-    supporting_str = _format(supporting) or "No recent news found."
-    counter_str = _format(counter) or "No specific counter-evidence found."
-
-    category = market.get("category", "other")
-
-    days_remaining = ""
+def _days_remaining(end_date: str) -> str:
     try:
-        from datetime import datetime, timezone
-
-        end = datetime.fromisoformat(market.get("end_date", "").replace("Z", "+00:00"))
+        end = datetime.fromisoformat(str(end_date).replace("Z", "+00:00"))
         if end.tzinfo is None:
             end = end.replace(tzinfo=timezone.utc)
-        delta = (end - datetime.now(timezone.utc)).days
-        days_remaining = f"Days until market closes: {delta}"
+        days = (end - datetime.now(timezone.utc)).days
+        return f"{days} days remaining"
     except Exception:
-        pass
+        return "unknown time remaining"
 
-    return f"""
-Market: {market['question']}
+
+def _build_prompt(market: dict) -> str:
+    outcomes = market.get("outcomes", [])
+    prices = market.get("prices", [])
+    outcomes_str = "\n".join(
+        f"  {outcome}: current market price {price:.2f} (implied probability {price * 100:.1f}%)"
+        for outcome, price in zip(outcomes, prices)
+    )
+    category = market.get("category", "general")
+
+    return f"""You are a prediction market analyst with access to Google Search.
+
+Market question: {market.get("question", "")}
 Category: {category}
-End date: {market['end_date']}
-Volume traded: ${market['volume']:,.0f}
-URL: {market['url']}
+Market closes: {market.get("end_date", "unknown")} ({_days_remaining(market.get("end_date", ""))})
+Total volume traded: ${market.get("volume", 0):,.0f}
+Market URL: {market.get("url", "")}
 
 Current outcome prices:
 {outcomes_str}
 
-Recent supporting news:
-{supporting_str}
+TASK:
+1. Use Google Search to find news and information from the LAST FEW DAYS relevant to this market.
+2. Search for both supporting evidence AND counter-evidence for each outcome.
+3. Based on what you find, determine if any outcome is significantly mispriced.
 
-Counter-evidence (reasons the favoured outcome may NOT happen):
-{counter_str}
+A market is mispriced when recent news suggests the true probability differs
+meaningfully from the current price. A 5-cent edge (0.05) is the minimum worth
+noting. Under 10 cents, be skeptical. Over 15 cents with strong news support is
+actionable. Weigh the counter-evidence seriously: if it materially undercuts the
+case, lower your confidence or decline to bet.
 
-{days_remaining}
-
-Analyze whether any outcome is mispriced. Weigh the counter-evidence seriously:
-if it materially undercuts the case, lower your confidence or decline to bet.
-Return ONLY a valid JSON object, no markdown, no explanation outside the JSON:
+Return ONLY a valid JSON object — no markdown, no explanation outside the JSON:
 
 {{
-  "recommended_outcome": "<outcome label or null>",
+  "recommended_outcome": "<outcome label or null if no clear edge>",
   "recommended_outcome_index": <integer index or null>,
-  "current_price": <float>,
-  "fair_value_estimate": <float>,
-  "edge": <fair_value_estimate minus current_price as float>,
+  "current_price": <float — price of the recommended outcome>,
+  "fair_value_estimate": <float — your probability estimate>,
+  "edge": <fair_value_estimate minus current_price>,
   "confidence": "<low|medium|high>",
-  "reasoning": "<2-3 sentence max>",
+  "reasoning": "<2-3 sentences max — what news drives this and why>",
   "news_supports_bet": <true|false>,
   "counter_evidence_considered": <true|false>,
-  "token_id": null
+  "news_headlines": ["<headline 1>", "<headline 2>", "<headline 3>"]
 }}
 
-If news is absent, irrelevant, or contradictory, set recommended_outcome to null and edge to 0.
+If news is absent, contradictory, or the market looks fairly priced, set
+recommended_outcome to null and edge to 0. Do not force a pick.
 """.strip()
 
 
-def _call_deepseek(user_message: str, model: str) -> dict[str, Any] | None:
-    headers = {
-        "Authorization": "Bearer " + DEEPSEEK_API_KEY,
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a prediction market analyst. Output only valid JSON. No markdown fences.",
-            },
-            {"role": "user", "content": user_message},
-        ],
-        "temperature": 0.1,
-        "max_tokens": 600,
-    }
+def _parse_json(raw: str) -> dict[str, Any]:
+    clean = raw.strip()
+    if clean.startswith("```"):
+        parts = clean.split("```")
+        clean = parts[1] if len(parts) > 1 else clean
+        if clean.startswith("json"):
+            clean = clean[4:]
+        clean = clean.strip()
+    return json.loads(clean)
 
-    last_error: Exception | None = None
+
+def _rate_limit_sleep() -> None:
+    if GEMINI_RPM and GEMINI_RPM > 0:
+        time.sleep(60.0 / GEMINI_RPM)
+
+
+def _call_gemini(prompt: str, use_pro: bool = False) -> dict[str, Any] | None:
+    from google.genai import types
+
+    client = _get_client()
+    model = GEMINI_MODEL_PRO if use_pro else GEMINI_MODEL
+
+    tools = []
+    if GEMINI_USE_SEARCH:
+        tools.append(types.Tool(google_search=types.GoogleSearch()))
+
+    config = types.GenerateContentConfig(
+        tools=tools or None,
+        temperature=0.1,
+        max_output_tokens=700,
+    )
+
+    raw = ""
     for attempt in range(2):
-        raw = ""
         try:
-            response = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=30)
-            if response.status_code >= 400:
-                if attempt == 0:
-                    LOGGER.warning("deepseek returned %s; retrying once", response.status_code)
-                    time.sleep(5)
-                    continue
-                response.raise_for_status()
-            body = response.json()
-            _record_usage(model, body.get("usage"))
-            raw = body["choices"][0]["message"]["content"].strip()
-            clean = raw.strip()
-            if clean.startswith("```"):
-                clean = clean.split("```")[1]
-                if clean.startswith("json"):
-                    clean = clean[4:]
-            return json.loads(clean.strip())
-        except json.JSONDecodeError:
-            LOGGER.error("deepseek returned non-json payload: %s", raw)
-            return None
-        except requests.RequestException as exc:
-            last_error = exc
+            _rate_limit_sleep()
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=config,
+            )
+            _record_usage(model, getattr(response, "usage_metadata", None))
+            raw = (response.text or "").strip()
+            return _parse_json(raw)
+        except json.JSONDecodeError as exc:
+            LOGGER.warning("Gemini JSON parse failed (attempt %s): %s | raw: %s", attempt + 1, exc, raw[:200])
             if attempt == 0:
-                LOGGER.warning("deepseek request failed: %s; retrying once", exc)
+                time.sleep(3)
+        except Exception as exc:  # pragma: no cover - network/SDK errors
+            LOGGER.warning("Gemini call failed (attempt %s): %s", attempt + 1, exc)
+            if attempt == 0:
                 time.sleep(5)
-                continue
-            raise
-
-    if last_error:
-        raise last_error
     return None
 
 
@@ -203,7 +231,7 @@ def _neutral_score(market: dict, reason: str) -> dict[str, Any]:
         "news_supports_bet": False,
         "counter_evidence_considered": False,
         "token_id": None,
-        "condition_id": market["condition_id"],
+        "condition_id": market.get("condition_id", ""),
         "category": market.get("category", "other"),
         "outcome_index": None,
     }
@@ -211,22 +239,30 @@ def _neutral_score(market: dict, reason: str) -> dict[str, Any]:
 
 def _coerce_score(market: dict, score: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(score)
+    outcomes = market.get("outcomes", [])
+    prices = market.get("prices", [])
+
     index = normalized.get("recommended_outcome_index")
     if index is not None:
         try:
             index = int(index)
         except (TypeError, ValueError):
             index = None
+
     recommended_outcome = normalized.get("recommended_outcome")
-    if index is not None and 0 <= index < len(market["outcomes"]) and not recommended_outcome:
-        recommended_outcome = market["outcomes"][index]
-    if recommended_outcome not in market["outcomes"]:
+    if index is not None and 0 <= index < len(outcomes) and not recommended_outcome:
+        recommended_outcome = outcomes[index]
+    if recommended_outcome not in outcomes:
         recommended_outcome = None
         index = None
 
     current_price = normalized.get("current_price")
-    if current_price is None and index is not None:
-        current_price = market["prices"][index]
+    if (
+        (current_price is None or float(current_price or 0) <= 0)
+        and index is not None
+        and 0 <= index < len(prices)
+    ):
+        current_price = prices[index]
 
     normalized.update(
         {
@@ -240,7 +276,7 @@ def _coerce_score(market: dict, score: dict[str, Any]) -> dict[str, Any]:
             "news_supports_bet": bool(normalized.get("news_supports_bet", False)),
             "counter_evidence_considered": bool(normalized.get("counter_evidence_considered", False)),
             "token_id": normalized.get("token_id"),
-            "condition_id": market["condition_id"],
+            "condition_id": market.get("condition_id", ""),
             "category": market.get("category", "other"),
             "outcome_index": index,
         }
@@ -248,41 +284,40 @@ def _coerce_score(market: dict, score: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def score_market(market: dict, news: list[dict]) -> dict | None:
-    if not news:
-        return _neutral_score(market, "No recent news found.")
+def score_market(market: dict, news: list[dict] | None = None) -> dict | None:
+    """Score a market with Gemini + Google Search grounding.
 
-    if not DEEPSEEK_API_KEY:
-        LOGGER.warning("DEEPSEEK_API_KEY is not configured; skipping market scoring")
+    The ``news`` parameter is accepted for backwards compatibility but ignored —
+    Gemini fetches its own news internally via search grounding.
+    """
+    if not GEMINI_API_KEY:
+        LOGGER.warning("GEMINI_API_KEY is not configured; skipping market scoring")
         return None
 
-    user_message = _build_user_message(market, news)
-    score = _call_deepseek(user_message, DEEPSEEK_MODEL)
+    prompt = _build_prompt(market)
+    score = _call_gemini(prompt, use_pro=False)
     if score is None:
+        return None
+
+    if "edge" not in score or "recommended_outcome" not in score:
+        LOGGER.warning("score missing required fields for: %s", str(market.get("question", ""))[:50])
         return None
 
     normalized = _coerce_score(market, score)
 
-    if normalized["confidence"] == "high" and normalized["edge"] > 0.10:
-        recheck = _call_deepseek(user_message, DEEPSEEK_REASONER_MODEL)
-        if recheck is None:
-            return normalized
-        second_opinion = _coerce_score(market, recheck)
-        if second_opinion["recommended_outcome"] != normalized["recommended_outcome"]:
-            LOGGER.info(
-                "deepseek models disagreed for market '%s': %s vs %s",
-                market["question"],
-                normalized["recommended_outcome"],
-                second_opinion["recommended_outcome"],
-            )
-            normalized.update(
-                {
-                    "recommended_outcome": None,
-                    "recommended_outcome_index": None,
-                    "edge": 0.0,
-                    "news_supports_bet": False,
-                    "outcome_index": None,
-                }
-            )
+    # High-confidence recheck with the Pro model on significant edges only.
+    if (
+        GEMINI_PRO_RECHECK
+        and normalized["confidence"] == "high"
+        and normalized["edge"] >= 0.12
+    ):
+        LOGGER.info("running Pro recheck for high-edge pick: %s", str(market.get("question", ""))[:50])
+        recheck_raw = _call_gemini(prompt, use_pro=True)
+        if recheck_raw is not None:
+            recheck = _coerce_score(market, recheck_raw)
+            if recheck["recommended_outcome"] != normalized["recommended_outcome"]:
+                LOGGER.info("Pro model disagrees — downgrading confidence to medium")
+                normalized["confidence"] = "medium"
+                normalized["pro_recheck_disagreed"] = True
 
     return normalized

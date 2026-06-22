@@ -13,6 +13,8 @@ def main():
     parser.add_argument("--dashboard", action="store_true", help="Launch web dashboard (requires fastapi + uvicorn)")
     parser.add_argument("--backfill",  action="store_true", help="Score recently closed markets and bootstrap resolved.jsonl")
     parser.add_argument("--backfill-days", type=int, default=14, help="How many days back to look for closed markets (default 14)")
+    parser.add_argument("--backtest",  action="store_true", help="Point-in-time quant backtest on resolved markets (no look-ahead bias)")
+    parser.add_argument("--backtest-days", type=int, default=30, help="How many days back to look for resolved markets (default 30)")
     parser.add_argument("--loop",      type=int, default=0, help="Repeat every N minutes (0 = run once)")
     parser.add_argument("--host",      type=str, default="127.0.0.1", help="Dashboard bind host (default 127.0.0.1; pass --host 0.0.0.0 for remote access and use a firewall/auth when doing so)")
     parser.add_argument("--port",      type=int, default=8080, help="Dashboard port (default 8080)")
@@ -35,7 +37,16 @@ def main():
             from backfill import run_backfill
         count = run_backfill(days_back=args.backfill_days)
         print(f"[backfill] wrote {count} synthetic resolved bets")
-        print("[backfill] NOTE: uses current news — has look-ahead bias. Run --validate after.")
+        print("[backfill] NOTE: Gemini uses current news — has look-ahead bias. Use --backtest for the bias-free quant signal, and --validate after.")
+        sys.exit(0)
+
+    # --backtest: point-in-time quant backtest and exit
+    if args.backtest:
+        try:
+            from .backtest import run_backtest
+        except ImportError:
+            from backtest import run_backtest
+        run_backtest(days_back=args.backtest_days)
         sys.exit(0)
 
     # --dashboard: launch web UI and exit
@@ -53,15 +64,15 @@ def main():
 
     try:
         from .fetcher       import fetch_markets
-        from .news          import fetch_news
+        from .pipeline      import analyze_market
         from .report        import build_report, print_summary, save_report
-        from .scorer        import score_market, reset_token_usage, get_token_usage
+        from .scorer        import reset_token_usage, get_token_usage
         from .paper_trader  import check_resolutions, record_paper_bet
     except ImportError:
         from fetcher       import fetch_markets
-        from news          import fetch_news
+        from pipeline      import analyze_market
         from report        import build_report, print_summary, save_report
-        from scorer        import score_market, reset_token_usage, get_token_usage
+        from scorer        import reset_token_usage, get_token_usage
         from paper_trader  import check_resolutions, record_paper_bet
 
     def run():
@@ -75,14 +86,22 @@ def main():
         print(f"[fetcher] {len(markets)} markets after filtering")
 
         scored = []
+        skipped = 0
         for market in markets:
             try:
-                news  = fetch_news(market["question"], market.get("end_date"))
-                score = score_market(market, news)
+                # Quant prefilter -> Gemini (search grounding) -> AI/quant fusion.
+                score = analyze_market(market)
                 if score:
-                    scored.append({**market, **score, "top_news": news[:3]})
+                    headlines = score.get("news_headlines") or []
+                    top_news = [{"title": h, "url": "", "date": ""} for h in headlines[:3]]
+                    scored.append({**market, **score, "top_news": top_news})
+                else:
+                    skipped += 1
             except Exception as exc:
                 print(f"[error] {market['question'][:60]}: {exc}", file=sys.stderr)
+
+        if skipped:
+            print(f"[pipeline] {skipped} markets skipped by quant prefilter / scoring")
 
         report = build_report(markets, scored, token_usage=get_token_usage())
         save_report(report)

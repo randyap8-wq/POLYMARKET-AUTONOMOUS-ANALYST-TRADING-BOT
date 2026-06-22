@@ -11,12 +11,10 @@ try:
     from .config import GAMMA_BASE, BASE_DIR
     from .categories import categorize
     from .scorer import score_market, reset_token_usage
-    from .news import fetch_news
 except ImportError:  # pragma: no cover
     from config import GAMMA_BASE, BASE_DIR
     from categories import categorize
     from scorer import score_market, reset_token_usage
-    from news import fetch_news
 
 LOGGER = logging.getLogger("backfill")
 
@@ -103,9 +101,10 @@ def run_backfill(days_back: int = 14, limit: int = 30) -> int:
     Score recently closed markets and write synthetic resolved bets.
     Returns number of bets written.
 
-    IMPORTANT: News is fetched NOW, not at market close — this has look-ahead
-    bias and will overstate accuracy. Use backfill data only to bootstrap the
-    validator; weight live paper bets more heavily for go-live decisions.
+    IMPORTANT: Gemini fetches news NOW (via search grounding), not at market
+    close — this has look-ahead bias and will overstate AI accuracy. Use backfill
+    data only to bootstrap the validator. For a bias-free read on the *quant*
+    signal, use `--backtest`, which replays CLOB price history point-in-time.
     """
     markets = _fetch_recently_closed(days_back=days_back, limit=limit)
     LOGGER.info("backfill: found %s recently closed markets", len(markets))
@@ -120,8 +119,7 @@ def run_backfill(days_back: int = 14, limit: int = 30) -> int:
             continue
 
         try:
-            news = fetch_news(market["question"], market.get("end_date"))
-            score = score_market(market, news)
+            score = score_market(market)  # Gemini fetches its own news via search grounding
             if not score or score.get("recommended_outcome") is None:
                 continue
 
