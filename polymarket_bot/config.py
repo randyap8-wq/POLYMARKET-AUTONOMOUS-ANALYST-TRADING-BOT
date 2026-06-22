@@ -24,6 +24,10 @@ LOGS_DIR.mkdir(exist_ok=True)
 logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
 LOGGER = logging.getLogger("polymarket_bot")
 
+# Dashboard bind host. Defaults to localhost so the unauthenticated dashboard is
+# not exposed; set DASHBOARD_HOST=0.0.0.0 (and use a firewall/auth) for VPS access.
+DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "127.0.0.1")
+
 GAMMA_BASE = "https://gamma-api.polymarket.com"
 CLOB_BASE = "https://clob.polymarket.com"
 DATA_BASE = "https://data-api.polymarket.com"

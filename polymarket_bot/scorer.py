@@ -199,7 +199,6 @@ def _call_gemini(prompt: str, use_pro: bool = False) -> dict[str, Any] | None:
     raw = ""
     for attempt in range(2):
         try:
-            _rate_limit_sleep()
             response = client.models.generate_content(
                 model=model,
                 contents=prompt,
@@ -207,11 +206,13 @@ def _call_gemini(prompt: str, use_pro: bool = False) -> dict[str, Any] | None:
             )
             _record_usage(model, getattr(response, "usage_metadata", None))
             raw = (response.text or "").strip()
+            # A successful API call consumes RPM budget, so throttle here (before
+            # parsing) -- a retry after malformed JSON must still respect GEMINI_RPM
+            # instead of firing again after only a short backoff.
+            _rate_limit_sleep()
             return _parse_json(raw)
         except json.JSONDecodeError as exc:
             LOGGER.warning("Gemini JSON parse failed (attempt %s): %s | raw: %s", attempt + 1, exc, raw[:200])
-            if attempt == 0:
-                time.sleep(3)
         except Exception as exc:  # pragma: no cover - network/SDK errors
             LOGGER.warning("Gemini call failed (attempt %s): %s", attempt + 1, exc)
             if attempt == 0:

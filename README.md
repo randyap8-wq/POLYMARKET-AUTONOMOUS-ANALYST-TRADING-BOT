@@ -236,7 +236,7 @@ auto-refreshes every 60 seconds. Pages:
 - **Validation** — calibration by confidence and edge bucket, plus recommendations.
 - **Live Trades** — real/dry-run orders from the trade log.
 
-Requires `fastapi` and `uvicorn` (included in `requirements.txt`).
+Requires `fastapi` and `uvicorn` (included in `requirements.txt`). The dashboard binds to `127.0.0.1` (localhost) by default for safety because its API is unauthenticated. For remote/VPS access, set `DASHBOARD_HOST=0.0.0.0` or pass `--host 0.0.0.0`, and put it behind a firewall/reverse proxy/auth.
 
 ## How paper trading validates the signal
 
