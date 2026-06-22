@@ -257,7 +257,11 @@ def _coerce_score(market: dict, score: dict[str, Any]) -> dict[str, Any]:
         index = None
 
     current_price = normalized.get("current_price")
-    if (current_price is None or float(current_price or 0) <= 0) and index is not None:
+    if (
+        (current_price is None or float(current_price or 0) <= 0)
+        and index is not None
+        and 0 <= index < len(prices)
+    ):
         current_price = prices[index]
 
     normalized.update(

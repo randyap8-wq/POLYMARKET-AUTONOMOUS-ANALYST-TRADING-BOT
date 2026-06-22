@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from polymarket_bot import scorer
 from polymarket_bot.scorer import (
+    _coerce_score,
     get_token_usage,
     reset_token_usage,
     score_market,
@@ -67,6 +68,19 @@ class ScoreMarketTests(unittest.TestCase):
         score = score_market(MARKET)
         self.assertIsNone(score["recommended_outcome"])
         self.assertIsNone(score["recommended_outcome_index"])
+
+    def test_coerce_score_handles_short_prices(self):
+        market = {**MARKET, "prices": [0.4]}
+        score = _coerce_score(
+            market,
+            {
+                "recommended_outcome": None,
+                "recommended_outcome_index": 1,
+                "current_price": 0,
+            },
+        )
+
+        self.assertEqual(score["current_price"], 0.0)
 
     @patch.object(scorer, "GEMINI_API_KEY", "fake-key")
     @patch.object(scorer, "GEMINI_PRO_RECHECK", True)

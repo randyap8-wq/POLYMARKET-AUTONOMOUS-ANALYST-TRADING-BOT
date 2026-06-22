@@ -67,6 +67,17 @@ class PipelineTests(unittest.TestCase):
 
     @patch.object(pipeline, "QUANT_ENABLED", True)
     @patch.object(pipeline, "QUANT_PREFILTER", True)
+    @patch.object(pipeline, "fetch_price_history", return_value=_rising())
+    @patch.object(pipeline, "fetch_order_book", return_value={"bids": [], "asks": []})
+    @patch.object(pipeline, "score_market")
+    def test_prefilter_fails_soft_when_book_missing_but_history_exists(self, mock_score, *_):
+        mock_score.return_value = _ai_pick()
+        result = pipeline.analyze_market(MARKET)
+        self.assertIsNotNone(result)
+        mock_score.assert_called_once()
+
+    @patch.object(pipeline, "QUANT_ENABLED", True)
+    @patch.object(pipeline, "QUANT_PREFILTER", True)
     @patch.object(pipeline, "fetch_price_history")
     @patch.object(pipeline, "fetch_order_book", return_value=LIQUID_BOOK)
     @patch.object(pipeline, "score_market")

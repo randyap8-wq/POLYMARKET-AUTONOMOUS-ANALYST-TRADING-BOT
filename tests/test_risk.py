@@ -91,6 +91,19 @@ class SizePositionsTests(unittest.TestCase):
             sized, _ = size_positions(opps, resolved=[])
             self.assertLessEqual(sum(1 for o in sized if o["stake_usdc"] > 0), 2)
 
+    def test_concurrency_cap_counts_only_sized_positions(self):
+        with patch.object(risk, "MAX_CONCURRENT_POSITIONS", 2), patch.object(
+            risk, "MAX_CATEGORY_EXPOSURE_USDC", 100
+        ):
+            opps = [
+                _opp(current_price=0.5, fair_value_estimate=0.5, category="z"),
+                _opp(current_price=0.1, fair_value_estimate=0.9, category="a"),
+                _opp(current_price=0.1, fair_value_estimate=0.9, category="b"),
+                _opp(current_price=0.1, fair_value_estimate=0.9, category="c"),
+            ]
+            sized, _ = size_positions(opps, resolved=[])
+            self.assertEqual(sum(1 for o in sized if o["stake_usdc"] > 0), 2)
+
     def test_annotates_each_opportunity(self):
         sized, _ = size_positions([_opp()], resolved=[])
         self.assertIn("stake_usdc", sized[0])

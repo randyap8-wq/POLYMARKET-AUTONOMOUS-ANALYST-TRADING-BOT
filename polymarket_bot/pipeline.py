@@ -53,6 +53,23 @@ def _quant_for_index(market: dict, index: int, book_cache: dict[int, dict]) -> d
     return compute_quant_signal(snapshot_price, history, book)
 
 
+def _book_signal(market: dict, index: int, book_cache: dict[int, dict]) -> dict[str, Any]:
+    """Build an order-book-only quant signal for prefiltering."""
+    token_ids = market.get("token_ids") or []
+    prices = market.get("prices") or []
+    snapshot_price = prices[index] if 0 <= index < len(prices) else 0.0
+
+    if index >= len(token_ids) or not token_ids[index]:
+        return compute_quant_signal(snapshot_price, [], {"bids": [], "asks": []})
+
+    token_id = token_ids[index]
+    book = book_cache.get(index)
+    if book is None:
+        book = fetch_order_book(token_id)
+        book_cache[index] = book
+    return compute_quant_signal(snapshot_price, [], book)
+
+
 def analyze_market(market: dict) -> dict | None:
     """Run quant prefilter -> AI -> fusion for a single market.
 
@@ -65,11 +82,11 @@ def analyze_market(market: dict) -> dict | None:
     book_cache: dict[int, dict] = {}
     outcomes = market.get("outcomes") or []
 
-    # Cheap prefilter for binary markets: skip untradeable books before the AI
-    # call. Multi-outcome books are not symmetric, so we defer their quant check
-    # until after the AI picks an outcome.
+    # Cheap prefilter for binary markets: skip only when the order book is present
+    # and untradeable. Multi-outcome books are not symmetric, so we defer their
+    # quant check until after the AI picks an outcome.
     if QUANT_PREFILTER and len(outcomes) == 2:
-        rep = _quant_for_index(market, 0, book_cache)
+        rep = _book_signal(market, 0, book_cache)
         if rep.get("available") and not rep.get("tradeable"):
             LOGGER.debug("quant prefilter skip '%s': %s", str(market.get("question", ""))[:50], rep.get("reason"))
             return None

@@ -120,7 +120,7 @@ def size_positions(
     category_used: dict[str, float] = {}
     n_sized = 0
 
-    for index, opp in enumerate(opportunities):
+    for opp in opportunities:
         price = float(opp.get("current_price") or 0.0)
         fair_value = float(opp.get("fair_value_estimate") or 0.0)
         volatility = float(opp.get("volatility") or 0.0)
@@ -131,7 +131,7 @@ def size_positions(
         stake = min(bankroll * base_fraction * vol_factor * dd_factor, MAX_BET_USDC)
 
         # Concurrency cap.
-        if index >= MAX_CONCURRENT_POSITIONS:
+        if n_sized >= MAX_CONCURRENT_POSITIONS:
             stake = 0.0
             opp["sizing_note"] = "beyond max concurrent positions"
 
