@@ -69,12 +69,17 @@ def fetch_markets() -> list[dict]:
             end_date = _parse_end_date(market["endDate"])
             outcomes = json.loads(market["outcomes"])
             prices = [float(price) for price in json.loads(market["outcomePrices"])]
+            try:
+                token_ids = [str(t) for t in json.loads(market.get("clobTokenIds") or "[]")]
+            except (TypeError, ValueError, json.JSONDecodeError):
+                token_ids = []
             normalized = {
                 "id": market["id"],
                 "condition_id": market["conditionId"],
                 "question": market["question"],
                 "outcomes": outcomes,
                 "prices": prices,
+                "token_ids": token_ids,
                 "volume": float(market.get("volume", 0) or 0),
                 "end_date": market["endDate"],
                 "slug": market.get("slug", ""),

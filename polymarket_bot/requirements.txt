@@ -1,6 +1,6 @@
 requests
 python-dotenv
-tavily-python
+google-genai
 eth-account
 web3
 schedule
