@@ -61,6 +61,7 @@ def fuse_signals(
     result["quant_fair_value"] = quant.get("quant_fair_value")
     result["quant_tradeable"] = quant.get("tradeable", False)
     result["volatility"] = quant.get("volatility", 0.0)
+    result["liquidity_usdc"] = quant.get("liquidity_usdc")
 
     ai_edge = float(ai_score.get("edge") or 0.0)
     ai_fair_value = float(ai_score.get("fair_value_estimate") or 0.0)

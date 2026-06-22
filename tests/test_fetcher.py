@@ -102,6 +102,50 @@ class FetchMarketsTests(unittest.TestCase):
         self.assertNotIn("crypto-mkt", ids)
         self.assertIn("politics-mkt", ids)
 
+    @patch("polymarket_bot.fetcher.requests.get")
+    @patch("polymarket_bot.fetcher.datetime", wraps=datetime)
+    def test_token_ids_parsed_from_clob_token_ids(self, mock_datetime, mock_get):
+        fixed_now = datetime(2026, 6, 21, tzinfo=timezone.utc)
+        future = (fixed_now + timedelta(days=5)).isoformat()
+        payload = [
+            {
+                "id": "with-tokens",
+                "conditionId": "cond-1",
+                "question": "Has tokens?",
+                "outcomes": json.dumps(["Yes", "No"]),
+                "outcomePrices": json.dumps(["0.45", "0.55"]),
+                "clobTokenIds": json.dumps(["111", "222"]),
+                "volume": "20000",
+                "endDate": future,
+                "slug": "with-tokens",
+            },
+            {
+                "id": "no-tokens",
+                "conditionId": "cond-2",
+                "question": "Missing tokens?",
+                "outcomes": json.dumps(["Yes", "No"]),
+                "outcomePrices": json.dumps(["0.4", "0.6"]),
+                "volume": "20000",
+                "endDate": future,
+                "slug": "no-tokens",
+            },
+        ]
+        mock_response = Mock()
+        mock_response.json.return_value = payload
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+        mock_datetime.now.return_value = fixed_now
+
+        markets = {m["id"]: m for m in fetch_markets()}
+
+        with_tokens = markets["with-tokens"]
+        self.assertIn("token_ids", with_tokens)
+        self.assertIsInstance(with_tokens["token_ids"], list)
+        self.assertEqual(with_tokens["token_ids"], ["111", "222"])
+
+        # Missing clobTokenIds degrades to an empty list, not a crash.
+        self.assertEqual(markets["no-tokens"]["token_ids"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

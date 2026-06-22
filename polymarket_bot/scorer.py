@@ -199,7 +199,6 @@ def _call_gemini(prompt: str, use_pro: bool = False) -> dict[str, Any] | None:
     raw = ""
     for attempt in range(2):
         try:
-            _rate_limit_sleep()
             response = client.models.generate_content(
                 model=model,
                 contents=prompt,
@@ -207,7 +206,9 @@ def _call_gemini(prompt: str, use_pro: bool = False) -> dict[str, Any] | None:
             )
             _record_usage(model, getattr(response, "usage_metadata", None))
             raw = (response.text or "").strip()
-            return _parse_json(raw)
+            result = _parse_json(raw)
+            _rate_limit_sleep()
+            return result
         except json.JSONDecodeError as exc:
             LOGGER.warning("Gemini JSON parse failed (attempt %s): %s | raw: %s", attempt + 1, exc, raw[:200])
             if attempt == 0:

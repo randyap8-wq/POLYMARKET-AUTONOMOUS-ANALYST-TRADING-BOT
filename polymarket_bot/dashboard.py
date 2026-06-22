@@ -619,7 +619,7 @@ def create_app():
     return app
 
 
-def run_dashboard(host: str = "127.0.0.1", port: int = 8080):
+def run_dashboard(host: str = "0.0.0.0", port: int = 8080):
     try:
         import uvicorn
     except ImportError as exc:

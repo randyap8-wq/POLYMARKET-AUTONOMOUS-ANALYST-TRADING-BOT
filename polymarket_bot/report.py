@@ -82,7 +82,7 @@ def build_report(all_markets, scored_results, token_usage: dict | None = None) -
                 "stake_usdc": item.get("stake_usdc", 0.0),
                 "vol_factor": item.get("vol_factor"),
                 "volatility": item.get("volatility"),
-                "liquidity_usdc": item.get("quant", {}).get("liquidity_usdc") if isinstance(item.get("quant"), dict) else None,
+                "liquidity_usdc": item.get("liquidity_usdc"),
                 "counter_evidence_considered": bool(item.get("counter_evidence_considered", False)),
                 "reasoning": item["reasoning"],
                 "top_news": [

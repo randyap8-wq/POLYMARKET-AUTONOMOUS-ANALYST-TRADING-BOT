@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--backtest",  action="store_true", help="Point-in-time quant backtest on resolved markets (no look-ahead bias)")
     parser.add_argument("--backtest-days", type=int, default=30, help="How many days back to look for resolved markets (default 30)")
     parser.add_argument("--loop",      type=int, default=0, help="Repeat every N minutes (0 = run once)")
-    parser.add_argument("--host",      type=str, default="127.0.0.1", help="Dashboard bind host (default 127.0.0.1; pass --host 0.0.0.0 for remote access and use a firewall/auth when doing so)")
+    parser.add_argument("--host",      type=str, default="0.0.0.0", help="Dashboard bind host (default 0.0.0.0 for VPS/remote access; pass --host 127.0.0.1 to restrict to localhost, and use a firewall/auth when exposing publicly)")
     parser.add_argument("--port",      type=int, default=8080, help="Dashboard port (default 8080)")
     args = parser.parse_args()
 
