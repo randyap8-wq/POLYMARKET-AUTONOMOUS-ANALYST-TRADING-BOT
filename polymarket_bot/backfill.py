@@ -67,7 +67,14 @@ def _fetch_recently_closed(days_back: int = 14, limit: int = 50) -> list[dict]:
                 "condition_id": m["conditionId"],
                 "question": m["question"],
                 "outcomes": outcomes,
-                "prices": [0.5] * len(outcomes),  # use 50/50 as "pre-close" price
+                # Feed every outcome a flat 0.5 implied probability instead of the
+                # true pre-resolution book price, so the scorer always "sees" a
+                # 50/50 market here. We don't have point-in-time prices for these
+                # closed markets, and backfill is already acknowledged as
+                # look-ahead biased (Gemini fetches news as of *now* — see
+                # run_backfill's docstring), so this placeholder is deliberate, not
+                # a bug. Use --backtest for a bias-free, point-in-time price read.
+                "prices": [0.5] * len(outcomes),
                 "volume": float(m.get("volume", 0) or 0),
                 "end_date": m.get("endDate", ""),
                 "slug": m.get("slug", ""),
