@@ -84,9 +84,18 @@ def place_bet(market: dict, score: dict) -> dict | None:
         )
         return None
 
-    edge = max(float(score.get("edge") or 0.0), 0.0)
-    stake_scale = min(max(edge * 2, 0.0), 1.0)
-    usdc_to_spend = round(MAX_BET_USDC * stake_scale, 2)
+    # Honour the stake the risk layer already computed (risk.size_positions,
+    # surfaced as stake_usdc in report.json) so the order we place matches what
+    # the report shows. A stake key that is *present but zero* is a deliberate
+    # veto — a concurrency/exposure cap or the drawdown circuit breaker said
+    # "don't size this" — so we must not bet. Only fall back to edge-scaled
+    # sizing when the key is absent entirely (risk layer never ran).
+    raw_stake = score.get("stake_usdc")
+    if raw_stake is None:
+        edge = max(float(score.get("edge") or 0.0), 0.0)
+        usdc_to_spend = round(min(MAX_BET_USDC * edge * 2, MAX_BET_USDC), 2)
+    else:
+        usdc_to_spend = round(max(float(raw_stake), 0.0), 2)
     if usdc_to_spend <= 0:
         LOGGER.info("skipping '%s'; computed stake is zero", market["question"])
         return None

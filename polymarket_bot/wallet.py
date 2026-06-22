@@ -54,6 +54,10 @@ def build_clob_client(level_2: bool = True) -> ClobClient:
     return client
 
 
+# Derive the CLOB API credentials once per process and reuse them. Deriving is a
+# signed round-trip to the exchange, and in --loop mode build_clob_client() runs
+# on every scan; maxsize=1 means we sign once and cache. This is intentional —
+# do not remove the cache or the bot will re-derive credentials on every loop.
 @lru_cache(maxsize=1)
 def get_clob_api_key():
     client = build_clob_client(level_2=False)
