@@ -101,22 +101,26 @@ def read_cached_score(
     newest: dict[str, Any] | None = None
 
     with _CACHE_LOCK:
-        with GEMINI_CACHE_PATH.open(encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not _cache_matches(entry, condition_id, cache_date):
-                    continue
-                timestamp = _parse_timestamp(entry.get("timestamp"))
-                if max_age_hours is not None and max_age_hours > 0:
-                    if timestamp is None or now - timestamp > timedelta(hours=max_age_hours):
+        try:
+            with GEMINI_CACHE_PATH.open(encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
                         continue
-                newest = entry
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not _cache_matches(entry, condition_id, cache_date):
+                        continue
+                    timestamp = _parse_timestamp(entry.get("timestamp"))
+                    if max_age_hours is not None and max_age_hours > 0:
+                        if timestamp is None or now - timestamp > timedelta(hours=max_age_hours):
+                            continue
+                    newest = entry
+        except OSError as exc:
+            LOGGER.debug("Gemini cache read failed for %s: %s", condition_id, exc)
+            return None
 
     score = newest.get("score") if newest else None
     return dict(score) if isinstance(score, dict) else None
