@@ -51,6 +51,24 @@ flowchart TD
     I --> J[report.json · paper bets · trades]
 ```
 
+## AI scoring discipline
+
+The Gemini scorer uses a structured forecasting prompt rather than a loose news
+summary. For each market it must:
+
+- decompose the resolution criteria and time remaining;
+- set a base rate before applying fresh evidence;
+- rank evidence from official/primary sources down to unverified social chatter;
+- make explicit Bayesian updates from the base rate;
+- compress uncertain estimates back toward 50%;
+- list key risks and only recommend an outcome when the analytical edge is above
+  2 cents.
+
+The returned JSON includes `base_rate`, `evidence_summary`, `bayesian_updates`,
+`key_risks`, `information_quality`, `edge_threshold_met`, `reasoning`, and
+`news_headlines`. These fields are preserved in `report.json` alongside the
+fusion and risk outputs for later review and calibration.
+
 ## Project layout
 
 The implementation lives under `polymarket_bot/`.

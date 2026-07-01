@@ -75,6 +75,12 @@ def build_report(all_markets, scored_results, token_usage: dict | None = None) -
                 "agreement": item.get("agreement"),
                 "blended_fair_value": item.get("blended_fair_value"),
                 "confidence": item["confidence"],
+                "base_rate": item.get("base_rate"),
+                "evidence_summary": item.get("evidence_summary", {}),
+                "bayesian_updates": item.get("bayesian_updates", []),
+                "key_risks": item.get("key_risks", []),
+                "information_quality": item.get("information_quality"),
+                "edge_threshold_met": bool(item.get("edge_threshold_met", False)),
                 "kelly_fraction": _kelly_fraction(
                     float(item.get("current_price") or 0.0),
                     float(item.get("fair_value_estimate") or 0.0),
@@ -97,6 +103,7 @@ def build_report(all_markets, scored_results, token_usage: dict | None = None) -
                 "volume": item["volume"],
                 "end_date": item["end_date"],
                 "condition_id": item["condition_id"],
+                "news_headlines": item.get("news_headlines", []),
             }
         )
 
