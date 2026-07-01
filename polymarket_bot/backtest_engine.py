@@ -55,10 +55,11 @@ def _order_book(row: dict[str, Any]) -> dict[str, list[dict[str, float]]]:
 
 
 def _total_liquidity(order_book: dict[str, list[dict[str, float]]]) -> float:
+    # BUY-only simulator: only ask-side depth can fill the trade, so bid-side
+    # liquidity is excluded to avoid under-estimating slippage/costs.
     total = 0.0
-    for side in ("bids", "asks"):
-        for level in order_book.get(side) or []:
-            total += _safe_float(level.get("price")) * _safe_float(level.get("size"))
+    for level in order_book.get("asks") or []:
+        total += _safe_float(level.get("price")) * _safe_float(level.get("size"))
     return max(total, 1.0)
 
 
@@ -68,6 +69,19 @@ def _to_records(data: Any) -> list[dict[str, Any]]:
     if hasattr(data, "to_dict"):
         return list(data.to_dict("records"))
     return [dict(row) for row in data]
+
+
+def _timestamp_sort_key(row: dict[str, Any]) -> tuple[int, float, str]:
+    """Order rows chronologically, sorting numeric timestamps numerically."""
+    raw = row.get("timestamp")
+    if raw is None:
+        raw = row.get("t")
+    if raw is None:
+        return (2, 0.0, "")
+    try:
+        return (0, float(raw), "")
+    except (TypeError, ValueError):
+        return (1, 0.0, str(raw))
 
 
 class BacktestEngine:
@@ -169,7 +183,7 @@ class BacktestEngine:
             key = str(row.get("market_id") or row.get("condition_id") or "market")
             groups[key].append(row)
         return [
-            sorted(rows, key=lambda item: str(item.get("timestamp") or item.get("t") or ""))
+            sorted(rows, key=_timestamp_sort_key)
             for rows in groups.values()
         ]
 

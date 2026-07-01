@@ -24,25 +24,18 @@ from statistics import pstdev
 from typing import Any
 
 try:
-    from .config import AI_WEIGHT, CONFIDENCE_RANK, DISAGREEMENT_PENALTY, QUANT_WEIGHT
+    from .config import CONFIDENCE_RANK, DISAGREEMENT_PENALTY
 except ImportError:  # pragma: no cover
-    from config import AI_WEIGHT, CONFIDENCE_RANK, DISAGREEMENT_PENALTY, QUANT_WEIGHT
+    from config import CONFIDENCE_RANK, DISAGREEMENT_PENALTY
 
-_RANK_TO_LEVEL = {rank: level for level, rank in CONFIDENCE_RANK.items()}
 LOGGER = logging.getLogger("fusion")
 
 # Quant conviction thresholds for calling agreement / disagreement.
 _AGREE_EPS = 0.05
 _STRONG_AGREE = 0.40
-DISAGREEMENT_DISCOUNT = float(os.getenv("DISAGREEMENT_DISCOUNT", "0.3"))
+DISAGREEMENT_DISCOUNT = max(0.0, min(1.0, float(os.getenv("DISAGREEMENT_DISCOUNT", "0.3"))))
 VOLATILITY_REGIME_THRESHOLD = float(os.getenv("VOLATILITY_REGIME_THRESHOLD", "0"))
 _VOL_WINDOW = 20
-
-
-def _bump(level: str, steps: int) -> str:
-    rank = CONFIDENCE_RANK.get(level, 0) + steps
-    rank = max(min(rank, max(_RANK_TO_LEVEL)), min(_RANK_TO_LEVEL))
-    return _RANK_TO_LEVEL[rank]
 
 
 def _coerce_confidence_score(value: Any) -> float:
@@ -156,8 +149,8 @@ def fuse_signals(
     quant_signal: dict[str, Any] | None,
     market_data: dict[str, Any] | None = None,
     *,
-    ai_weight: float = AI_WEIGHT,
-    quant_weight: float = QUANT_WEIGHT,
+    ai_weight: float | None = None,
+    quant_weight: float | None = None,
     penalty: float = DISAGREEMENT_PENALTY,
 ) -> dict[str, Any]:
     """Return a new score dict blending AI and quant signals adaptively."""
@@ -227,7 +220,12 @@ def fuse_signals(
 
     prices = _extract_prices(market_data) or _extract_prices(quant)
     regime = calculate_volatility_regime(prices) if prices else ("HIGH" if float(quant.get("volatility") or 0.0) > 0.02 else "LOW")
-    ai_weight, quant_weight = _weights_for_regime(regime)
+    # Only apply regime-switching defaults for weights the caller did not supply.
+    regime_ai_weight, regime_quant_weight = _weights_for_regime(regime)
+    if ai_weight is None:
+        ai_weight = regime_ai_weight
+    if quant_weight is None:
+        quant_weight = regime_quant_weight
     weight_sum = (ai_weight + quant_weight) or 1.0
     fused_probability = (ai_weight * ai_fair_value + quant_weight * quant_probability) / weight_sum
     fused_edge = fused_probability - current_price if current_price > 0 else (ai_weight * ai_edge + quant_weight * quant_edge) / weight_sum
