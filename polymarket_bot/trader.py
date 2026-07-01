@@ -113,7 +113,10 @@ def _cancel_order(client: Any, order_id: str) -> None:
 
 def _is_filled(payload: dict[str, Any]) -> bool:
     status = str(payload.get("status") or payload.get("state") or "").lower()
-    filled_size = float(payload.get("filled_size") or payload.get("filledSize") or 0.0)
+    try:
+        filled_size = float(payload.get("filled_size") or payload.get("filledSize") or 0.0)
+    except (TypeError, ValueError):
+        filled_size = 0.0
     return status in {"filled", "matched", "complete", "completed"} or filled_size > 0
 
 
