@@ -241,4 +241,4 @@ def analyze_market(market: dict) -> dict | None:
         ai, quant_signal = _maybe_switch_multi_outcome(market, ai, quant_by_index)
     else:
         quant_signal = _quant_for_index(market, index, book_cache, stats)
-    return fuse_signals(ai, quant_signal, market_data={"prices": market.get("prices") or []})
+    return fuse_signals(ai, quant_signal, market_data={"prices": market.get("prices") or []}, ai_weight=AI_WEIGHT, quant_weight=QUANT_WEIGHT)
