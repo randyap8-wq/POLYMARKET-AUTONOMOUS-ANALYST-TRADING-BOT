@@ -365,7 +365,7 @@ def _feature_payload(
     market_stats: dict[str, Any] | None = None,
 ) -> dict[str, float]:
     """Build the enhanced numerical feature set used by ML and fallback logic."""
-    if not prices and not order_book.get("bids"):
+    if not prices and not (order_book.get("bids") or order_book.get("asks")):
         return _empty_feature_payload()
 
     history = [{"p": p} for p in prices]
