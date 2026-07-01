@@ -111,7 +111,7 @@ class ScoreMarketTests(unittest.TestCase):
         self.assertIn("more than 0.02", prompt)
         self.assertIn('"base_rate"', prompt)
         self.assertIn('"bayesian_updates"', prompt)
-        self.assertIn("Weight polling averages", prompt)
+        self.assertIn("Weight polling data heavily", prompt)
 
     def test_coerce_score_preserves_structured_reasoning_fields(self):
         score = _coerce_score(
@@ -144,7 +144,8 @@ class ScoreMarketTests(unittest.TestCase):
         )
 
         self.assertEqual(score["edge"], 0.15)
-        self.assertEqual(score["confidence"], "high")
+        self.assertEqual(score["confidence"], 85.0)
+        self.assertEqual(score["confidence_level"], "high")
         self.assertEqual(score["base_rate"], 0.45)
         self.assertEqual(score["evidence_summary"]["official_data"], ["NWS forecast"])
         self.assertEqual(score["bayesian_updates"][0]["probability_after"], 0.55)
@@ -192,7 +193,8 @@ class ScoreMarketTests(unittest.TestCase):
 
         score = score_market(MARKET)
         self.assertEqual(mock_call.call_count, 2)
-        self.assertEqual(score["confidence"], "medium")
+        self.assertEqual(score["confidence"], 65.0)
+        self.assertEqual(score["confidence_level"], "medium")
         self.assertTrue(score["pro_recheck_disagreed"])
 
     @patch.object(scorer, "GEMINI_API_KEY", "fake-key")

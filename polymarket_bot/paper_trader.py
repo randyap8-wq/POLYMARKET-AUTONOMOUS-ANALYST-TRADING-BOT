@@ -10,8 +10,10 @@ import requests
 
 try:
     from .config import GAMMA_BASE, BASE_DIR
+    from .utils import retry_with_backoff
 except ImportError:  # pragma: no cover
     from config import GAMMA_BASE, BASE_DIR
+    from utils import retry_with_backoff
 
 LOGGER = logging.getLogger("paper_trader")
 
@@ -20,6 +22,19 @@ PAPER_BETS_PATH = DATA_DIR / "paper_bets.jsonl"
 RESOLVED_PATH = DATA_DIR / "resolved.jsonl"
 
 DATA_DIR.mkdir(exist_ok=True)
+
+
+@retry_with_backoff(max_retries=5, base_delay=1)
+def _fetch_gamma_market_by_condition(condition_id: str) -> list[dict]:
+    """Fetch a Gamma market by condition id with retry/backoff."""
+    resp = requests.get(
+        f"{GAMMA_BASE}/markets",
+        params={"condition_id": condition_id},
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data if isinstance(data, list) else [data]
 
 
 def record_paper_bet(market: dict, score: dict, news: list[dict]) -> dict | None:
@@ -57,6 +72,8 @@ def record_paper_bet(market: dict, score: dict, news: list[dict]) -> dict | None
         "fair_value_estimate": float(score.get("fair_value_estimate") or 0.0),
         "edge": float(score.get("edge") or 0.0),
         "confidence": score.get("confidence", "low"),
+        "confidence_level": score.get("confidence_level", "low"),
+        "ai_confidence": score.get("confidence", 0.0),
         "reasoning": score.get("reasoning", ""),
         "top_news": [
             {"title": n.get("title", ""), "url": n.get("url", ""), "date": n.get("published_date", "")}
@@ -126,14 +143,7 @@ def check_resolutions() -> int:
             continue
 
         try:
-            resp = requests.get(
-                f"{GAMMA_BASE}/markets",
-                params={"condition_id": condition_id},
-                timeout=20,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            markets = data if isinstance(data, list) else [data]
+            markets = _fetch_gamma_market_by_condition(condition_id)
             if not markets:
                 continue
             mkt = markets[0]

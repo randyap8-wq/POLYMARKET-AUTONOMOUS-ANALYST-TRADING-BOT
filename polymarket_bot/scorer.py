@@ -24,6 +24,7 @@ try:
         GEMINI_RPM,
         GEMINI_USE_SEARCH,
     )
+    from .utils import retry_with_backoff
 except ImportError:  # pragma: no cover
     from config import (
         GEMINI_API_KEY,
@@ -34,6 +35,7 @@ except ImportError:  # pragma: no cover
         GEMINI_RPM,
         GEMINI_USE_SEARCH,
     )
+    from utils import retry_with_backoff
 
 LOGGER = logging.getLogger("scorer")
 
@@ -41,20 +43,13 @@ _client = None
 
 ANALYTICAL_EDGE_THRESHOLD = 0.02
 _EVIDENCE_KEYS = ("official_data", "reputable_reporting", "market_signals", "social_or_unverified")
-_CATEGORY_GUIDANCE = {
-    "politics": (
-        "Weight polling averages, official election/admin data, court filings, "
-        "and electoral mechanics. Treat single polls and partisan commentary as weak evidence."
-    ),
-    "crypto": (
-        "Consider on-chain metrics, ETF/fund-flow data, exchange liquidity, major "
-        "wallet movement, protocol events, and macro rate/risk conditions."
-    ),
-    "sports": (
-        "Weight official injury reports, lineup news, rest/travel spots, recent "
-        "form, matchup history, and weather for outdoor events."
-    ),
+CATEGORY_INSTRUCTIONS = {
+    "politics": "Weight polling data heavily. Account for electoral college dynamics and incumbency advantage.",
+    "crypto": "Consider on-chain metrics (active addresses, exchange flows), whale movements, and macro-economic conditions.",
+    "sports": "Weight injury reports, head-to-head history, recent form, and home/away advantage.",
+    "default": "Use general event forecasting principles.",
 }
+_CATEGORY_GUIDANCE = CATEGORY_INSTRUCTIONS
 
 _TOKEN_USAGE = {
     "calls": 0,
@@ -141,6 +136,29 @@ def _coerce_probability(value: Any, default: float = 0.0) -> float:
     return max(0.0, min(1.0, _safe_float(value, default)))
 
 
+def _coerce_confidence_score(value: Any, default: float = 0.0) -> float:
+    """Normalize model confidence to a 0-100 calibration score."""
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"low", "medium", "high"}:
+            return {"low": 35.0, "medium": 65.0, "high": 85.0}[text]
+        value = text.rstrip("%")
+    raw = _safe_float(value, default)
+    if 0.0 <= raw <= 1.0:
+        raw *= 100.0
+    return round(max(0.0, min(100.0, raw)), 2)
+
+
+def _confidence_level(confidence: Any) -> str:
+    """Map numeric confidence to the existing low/medium/high buckets."""
+    score = _coerce_confidence_score(confidence)
+    if score >= 75.0:
+        return "high"
+    if score >= 50.0:
+        return "medium"
+    return "low"
+
+
 def _coerce_string_list(value: Any, limit: int = 5) -> list[str]:
     if value is None:
         return []
@@ -192,10 +210,7 @@ def _coerce_bayesian_updates(value: Any) -> list[dict[str, Any]]:
 
 
 def _category_guidance(category: str) -> str:
-    return _CATEGORY_GUIDANCE.get(
-        str(category or "").lower(),
-        "Use category-specific primary sources where available, then reputable reporting, then market/price signals, and treat unsourced social chatter as weak evidence.",
-    )
+    return CATEGORY_INSTRUCTIONS.get(str(category or "").lower(), CATEGORY_INSTRUCTIONS["default"])
 
 
 def _format_liquidity_context(market: dict) -> str:
@@ -209,7 +224,8 @@ def _format_liquidity_context(market: dict) -> str:
     return "\n".join(lines)
 
 
-def _build_prompt(market: dict) -> str:
+def build_prompt(market: dict, category: str | None = None) -> str:
+    """Build the Gemini analysis prompt with category-specific instructions."""
     outcomes = market.get("outcomes", [])
     prices = market.get("prices", [])
     outcome_lines = []
@@ -219,7 +235,7 @@ def _build_prompt(market: dict) -> str:
             f"  {outcome}: current market price {price:.2f} (implied probability {price * 100:.1f}%)"
         )
     outcomes_str = "\n".join(outcome_lines) or "  (no outcome prices supplied)"
-    category = market.get("category", "general")
+    category = category or market.get("category", "general")
 
     return f"""You are a disciplined prediction market analyst with access to Google Search.
 
@@ -259,9 +275,11 @@ outside the JSON:
   "recommended_outcome": "<outcome label or null if no clear edge>",
   "recommended_outcome_index": <integer index or null>,
   "current_price": <float — price of the recommended outcome>,
+  "probability": <float — same value as fair_value_estimate>,
   "fair_value_estimate": <float — your probability estimate>,
   "edge": <fair_value_estimate minus current_price>,
-  "confidence": "<low|medium|high>",
+  "confidence": <integer or float from 0 to 100>,
+  "direction": "<BUY|SKIP>",
   "base_rate": <float probability before latest evidence>,
   "evidence_summary": {{
     "official_data": ["<primary-source evidence>"],
@@ -292,6 +310,9 @@ edge_threshold_met to false, and news_supports_bet to false. Do not force a pick
 """.strip()
 
 
+_build_prompt = build_prompt
+
+
 def _parse_json(raw: str) -> dict[str, Any]:
     clean = raw.strip()
     if clean.startswith("```"):
@@ -306,6 +327,16 @@ def _parse_json(raw: str) -> dict[str, Any]:
 def _rate_limit_sleep() -> None:
     if GEMINI_RPM and GEMINI_RPM > 0:
         time.sleep(60.0 / GEMINI_RPM)
+
+
+@retry_with_backoff(max_retries=5, base_delay=1)
+def _generate_content(client: Any, model: str, prompt: str, config: Any) -> Any:
+    """Call Gemini with backoff around transient SDK/network failures."""
+    return client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=config,
+    )
 
 
 def _call_gemini(prompt: str, use_pro: bool = False) -> dict[str, Any] | None:
@@ -327,11 +358,7 @@ def _call_gemini(prompt: str, use_pro: bool = False) -> dict[str, Any] | None:
     raw = ""
     for attempt in range(2):
         try:
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=config,
-            )
+            response = _generate_content(client, model, prompt, config)
             _record_usage(model, getattr(response, "usage_metadata", None))
             raw = (response.text or "").strip()
             # A successful API call consumes RPM budget, so throttle here (before
@@ -355,7 +382,10 @@ def _neutral_score(market: dict, reason: str) -> dict[str, Any]:
         "current_price": 0.0,
         "fair_value_estimate": 0.0,
         "edge": 0.0,
-        "confidence": "low",
+        "probability": 0.0,
+        "confidence": 0.0,
+        "confidence_level": "low",
+        "direction": "SKIP",
         "reasoning": reason,
         "base_rate": 0.5,
         "evidence_summary": _coerce_evidence_summary({}),
@@ -398,7 +428,7 @@ def _coerce_score(market: dict, score: dict[str, Any]) -> dict[str, Any]:
     if current_price <= 0 and index is not None and 0 <= index < len(prices):
         current_price = _coerce_probability(prices[index], 0.0)
 
-    fair_value = _coerce_probability(normalized.get("fair_value_estimate"), 0.0)
+    fair_value = _coerce_probability(normalized.get("fair_value_estimate", normalized.get("probability")), 0.0)
     edge = _safe_float(normalized.get("edge"), 0.0)
     if recommended_outcome and current_price > 0 and fair_value > 0:
         edge = round(fair_value - current_price, 4)
@@ -414,9 +444,8 @@ def _coerce_score(market: dict, score: dict[str, Any]) -> dict[str, Any]:
         index = None
         edge = 0.0
         news_supports_bet = False
-    confidence = str(normalized.get("confidence") or "low").lower()
-    if confidence not in {"low", "medium", "high"}:
-        confidence = "low"
+    confidence = _coerce_confidence_score(normalized.get("confidence", normalized.get("confidence_score")), 0.0)
+    confidence_level = _confidence_level(confidence)
 
     information_quality = str(normalized.get("information_quality") or "low").lower()
     if information_quality not in {"low", "medium", "high"}:
@@ -428,8 +457,11 @@ def _coerce_score(market: dict, score: dict[str, Any]) -> dict[str, Any]:
             "recommended_outcome_index": index,
             "current_price": current_price,
             "fair_value_estimate": fair_value,
+            "probability": fair_value,
             "edge": edge,
             "confidence": confidence,
+            "confidence_level": confidence_level,
+            "direction": str(normalized.get("direction") or ("BUY" if recommended_outcome else "SKIP")).upper(),
             "base_rate": _coerce_probability(normalized.get("base_rate"), 0.5),
             "evidence_summary": _coerce_evidence_summary(normalized.get("evidence_summary")),
             "bayesian_updates": _coerce_bayesian_updates(normalized.get("bayesian_updates")),
@@ -459,7 +491,7 @@ def score_market(market: dict, news: list[dict] | None = None) -> dict | None:
         LOGGER.warning("GEMINI_API_KEY is not configured; skipping market scoring")
         return None
 
-    prompt = _build_prompt(market)
+    prompt = build_prompt(market, category=market.get("category"))
     score = _call_gemini(prompt, use_pro=False)
     if score is None:
         return None
@@ -473,7 +505,7 @@ def score_market(market: dict, news: list[dict] | None = None) -> dict | None:
     # High-confidence recheck with the Pro model on significant edges only.
     if (
         GEMINI_PRO_RECHECK
-        and normalized["confidence"] == "high"
+        and normalized["confidence_level"] == "high"
         and normalized["edge"] >= 0.12
     ):
         LOGGER.info("running Pro recheck for high-edge pick: %s", str(market.get("question", ""))[:50])
@@ -482,7 +514,8 @@ def score_market(market: dict, news: list[dict] | None = None) -> dict | None:
             recheck = _coerce_score(market, recheck_raw)
             if recheck["recommended_outcome"] != normalized["recommended_outcome"]:
                 LOGGER.info("Pro model disagrees — downgrading confidence to medium")
-                normalized["confidence"] = "medium"
+                normalized["confidence"] = 65.0
+                normalized["confidence_level"] = "medium"
                 normalized["pro_recheck_disagreed"] = True
 
     return normalized

@@ -19,12 +19,22 @@ import requests
 
 try:
     from .config import CLOB_BASE, QUANT_HISTORY_FIDELITY, QUANT_HISTORY_INTERVAL
+    from .utils import retry_with_backoff
 except ImportError:  # pragma: no cover
     from config import CLOB_BASE, QUANT_HISTORY_FIDELITY, QUANT_HISTORY_INTERVAL
+    from utils import retry_with_backoff
 
 LOGGER = logging.getLogger("market_data")
 
 _TIMEOUT = 15
+
+
+@retry_with_backoff(max_retries=5, base_delay=1)
+def _get_json(url: str, params: dict[str, Any] | None = None) -> Any:
+    """GET JSON with retries for transient CLOB/API failures."""
+    response = requests.get(url, params=params, timeout=_TIMEOUT)
+    response.raise_for_status()
+    return response.json()
 
 
 def fetch_price_history(
@@ -41,13 +51,10 @@ def fetch_price_history(
     interval = interval or QUANT_HISTORY_INTERVAL
     fidelity = fidelity or QUANT_HISTORY_FIDELITY
     try:
-        response = requests.get(
+        payload = _get_json(
             f"{CLOB_BASE}/prices-history",
             params={"market": token_id, "interval": interval, "fidelity": fidelity},
-            timeout=_TIMEOUT,
         )
-        response.raise_for_status()
-        payload = response.json()
     except Exception as exc:  # pragma: no cover - network dependent
         LOGGER.debug("price history fetch failed for %s: %s", token_id, exc)
         return []
@@ -72,13 +79,7 @@ def fetch_order_book(token_id: str) -> dict[str, list[dict[str, float]]]:
     if not token_id:
         return empty
     try:
-        response = requests.get(
-            f"{CLOB_BASE}/book",
-            params={"token_id": token_id},
-            timeout=_TIMEOUT,
-        )
-        response.raise_for_status()
-        payload = response.json()
+        payload = _get_json(f"{CLOB_BASE}/book", params={"token_id": token_id})
     except Exception as exc:  # pragma: no cover - network dependent
         LOGGER.debug("order book fetch failed for %s: %s", token_id, exc)
         return empty
@@ -100,9 +101,7 @@ def fetch_market_tokens(condition_id: str) -> list[dict[str, Any]]:
     if not condition_id:
         return []
     try:
-        response = requests.get(f"{CLOB_BASE}/markets/{condition_id}", timeout=_TIMEOUT)
-        response.raise_for_status()
-        payload = response.json()
+        payload = _get_json(f"{CLOB_BASE}/markets/{condition_id}")
     except Exception as exc:  # pragma: no cover - network dependent
         LOGGER.debug("market tokens fetch failed for %s: %s", condition_id, exc)
         return []
