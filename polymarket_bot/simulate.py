@@ -25,7 +25,10 @@ def _load_trades(path: str | Path = FULL_BACKTEST_PATH) -> list[dict[str, Any]]:
     source = Path(path)
     if not source.exists():
         return []
-    payload = json.loads(source.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
     rows = payload.get("trades", payload) if isinstance(payload, dict) else payload
     return [dict(row) for row in rows if isinstance(row, dict)]
 
