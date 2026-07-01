@@ -129,7 +129,8 @@ def _post_limit_order_with_retry(client: Any, token_id: str, price: float, size:
         result = client.post_order(order, limit_type)
         last_result = result if isinstance(result, dict) else {"status": str(result)}
         order_id = _extract_order_id(last_result)
-
+        if order_id:
+            last_result.setdefault("orderID", order_id)
         if _is_filled(last_result) or not order_id:
             LOGGER.info("limit order finished immediately at %.4f: %s", limit_price, last_result.get("status", "posted"))
             return last_result
