@@ -404,12 +404,16 @@ def _coerce_score(market: dict, score: dict[str, Any]) -> dict[str, Any]:
         edge = round(fair_value - current_price, 4)
 
     news_supports_bet = bool(normalized.get("news_supports_bet", False))
-    if not recommended_outcome or edge <= ANALYTICAL_EDGE_THRESHOLD:
+    if (
+        not recommended_outcome
+        or current_price <= 0
+        or fair_value <= 0
+        or edge <= ANALYTICAL_EDGE_THRESHOLD
+    ):
         recommended_outcome = None
         index = None
         edge = 0.0
         news_supports_bet = False
-
     confidence = str(normalized.get("confidence") or "low").lower()
     if confidence not in {"low", "medium", "high"}:
         confidence = "low"
