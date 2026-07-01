@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 try:
     from .config import (
         CONFIDENCE_RANK,
+        DYNAMIC_EDGE,
         MIN_CONFIDENCE,
         MIN_EDGE,
         REPORT_PATH,
@@ -16,6 +17,7 @@ try:
 except ImportError:  # pragma: no cover
     from config import (
         CONFIDENCE_RANK,
+        DYNAMIC_EDGE,
         MIN_CONFIDENCE,
         MIN_EDGE,
         REPORT_PATH,
@@ -65,11 +67,24 @@ def _kelly_fraction(price: float, fair_value: float) -> float:
     return round(max(0.0, min(full_kelly * 0.5, 1.0)), 4)
 
 
+def _dynamic_min_edge(result: dict) -> float:
+    if not DYNAMIC_EDGE:
+        return MIN_EDGE
+    if result.get("spread") is None and result.get("volatility") is None:
+        return MIN_EDGE
+    try:
+        spread = max(float(result.get("spread") or 0.0), 0.0)
+        volatility = max(float(result.get("volatility") or 0.0), 0.0)
+    except (TypeError, ValueError):
+        return MIN_EDGE
+    return round(max(0.02, spread + volatility * 2.0), 4)
+
+
 def build_report(all_markets, scored_results, token_usage: dict | None = None) -> dict:
     opportunities = [
         result
         for result in scored_results
-        if result["edge"] >= MIN_EDGE
+        if result["edge"] >= _dynamic_min_edge(result)
         and CONFIDENCE_RANK[_confidence_level(result.get("confidence_level", result.get("confidence")))] >= CONFIDENCE_RANK[MIN_CONFIDENCE]
         and result["news_supports_bet"]
         and result["recommended_outcome"] is not None
@@ -93,6 +108,7 @@ def build_report(all_markets, scored_results, token_usage: dict | None = None) -
                 "current_price": item["current_price"],
                 "fair_value_estimate": item["fair_value_estimate"],
                 "edge": item["edge"],
+                "min_edge": _dynamic_min_edge(item),
                 "ai_edge": item.get("ai_edge"),
                 "quant_edge": item.get("quant_edge"),
                 "quant_score": item.get("quant_score"),
@@ -115,7 +131,10 @@ def build_report(all_markets, scored_results, token_usage: dict | None = None) -
                 "position_size_multiplier": item.get("position_size_multiplier", 1.0),
                 "vol_factor": item.get("vol_factor"),
                 "volatility": item.get("volatility"),
+                "spread": item.get("spread"),
                 "liquidity_usdc": item.get("liquidity_usdc"),
+                "volume_24h": item.get("volume_24h"),
+                "open_interest": item.get("open_interest"),
                 "counter_evidence_considered": bool(item.get("counter_evidence_considered", False)),
                 "reasoning": item["reasoning"],
                 "top_news": [

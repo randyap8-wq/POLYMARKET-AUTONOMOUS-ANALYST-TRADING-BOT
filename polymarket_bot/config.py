@@ -15,6 +15,7 @@ DATA_DIR = BASE_DIR / "data"
 PAPER_BETS_PATH = DATA_DIR / "paper_bets.jsonl"
 RESOLVED_PATH = DATA_DIR / "resolved.jsonl"
 PERFORMANCE_PATH = DATA_DIR / "performance.json"
+GEMINI_CACHE_PATH = DATA_DIR / "gemini_cache.jsonl"
 
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -68,6 +69,7 @@ GEMINI_PRO_RECHECK = _as_bool(os.getenv("GEMINI_PRO_RECHECK", "true"), True)
 # Free tier is 15 requests/min. The scorer sleeps 60/RPM seconds between calls.
 # Raise (or set 0) when using a paid Vertex key with a higher limit.
 GEMINI_RPM = int(os.getenv("GEMINI_RPM", "15"))
+GEMINI_CACHE_TTL_HOURS = float(os.getenv("GEMINI_CACHE_TTL_HOURS", "24"))
 
 # Cost tracking. Gemini Flash free tier = $0. If you move to a paid Vertex key,
 # set USD-per-1M-token prices here (or via env) to keep cost reporting honest.
@@ -118,6 +120,7 @@ QUANT_WEIGHT = float(os.getenv("QUANT_WEIGHT", "0.4"))
 # Tradeability gates (order-book microstructure).
 MIN_BOOK_LIQUIDITY_USDC = float(os.getenv("MIN_BOOK_LIQUIDITY_USDC", "200"))
 MAX_SPREAD = float(os.getenv("MAX_SPREAD", "0.06"))
+MIN_VOLUME_24H_USDC = float(os.getenv("MIN_VOLUME_24H_USDC", "5000"))
 
 # Price-history sampling for the quant features (CLOB /prices-history).
 QUANT_HISTORY_INTERVAL = os.getenv("QUANT_HISTORY_INTERVAL", "1w")
@@ -136,8 +139,10 @@ DISAGREEMENT_PENALTY = float(os.getenv("DISAGREEMENT_PENALTY", "0.5"))
 # ---------------------------------------------------------------------------
 MAX_BET_USDC = float(os.getenv("MAX_BET_USDC", "10"))
 MIN_EDGE = float(os.getenv("MIN_EDGE", "0.07"))
+DYNAMIC_EDGE = _as_bool(os.getenv("DYNAMIC_EDGE", "true"), True)
 MIN_CONFIDENCE = os.getenv("MIN_CONFIDENCE", "medium").strip().lower()
 DRY_RUN = _as_bool(os.getenv("DRY_RUN", "true"), True)
+USE_LIMIT_ORDERS = _as_bool(os.getenv("USE_LIMIT_ORDERS", "false"), False)
 
 # Half-Kelly by default; volatility scaling shrinks this further on choppy books.
 KELLY_FRACTION = float(os.getenv("KELLY_FRACTION", "0.5"))

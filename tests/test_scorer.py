@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from polymarket_bot import scorer
@@ -8,8 +10,10 @@ from polymarket_bot.scorer import (
     _build_prompt,
     _coerce_score,
     get_token_usage,
+    read_cached_score,
     reset_token_usage,
     score_market,
+    write_cached_score,
 )
 
 
@@ -28,6 +32,11 @@ MARKET = {
 class ScoreMarketTests(unittest.TestCase):
     def setUp(self):
         reset_token_usage()
+        self._cache_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._cache_dir.cleanup)
+        cache_patcher = patch.object(scorer, "GEMINI_CACHE_PATH", Path(self._cache_dir.name) / "gemini_cache.jsonl")
+        cache_patcher.start()
+        self.addCleanup(cache_patcher.stop)
         self.addCleanup(reset_token_usage)
 
     @patch.object(scorer, "GEMINI_API_KEY", "")
@@ -265,6 +274,30 @@ class TokenUsageTests(unittest.TestCase):
     def test_record_usage_ignores_missing(self):
         scorer._record_usage(scorer.GEMINI_MODEL, None)
         self.assertEqual(get_token_usage()["calls"], 0)
+
+
+class GeminiCacheTests(unittest.TestCase):
+    def test_write_and_read_cached_score_by_market_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "gemini_cache.jsonl"
+            market = {**MARKET, "cache_date": "2026-06-01"}
+            score = {"recommended_outcome": "Yes", "edge": 0.2}
+
+            with patch.object(scorer, "GEMINI_CACHE_PATH", cache_path):
+                write_cached_score(market, score)
+                cached = read_cached_score(market, max_age_hours=None)
+
+        self.assertEqual(cached, score)
+
+    def test_cache_misses_different_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "gemini_cache.jsonl"
+            market = {**MARKET, "cache_date": "2026-06-01"}
+            other_date = {**MARKET, "cache_date": "2026-06-02"}
+
+            with patch.object(scorer, "GEMINI_CACHE_PATH", cache_path):
+                write_cached_score(market, {"recommended_outcome": "Yes"})
+                self.assertIsNone(read_cached_score(other_date, max_age_hours=None))
 
 
 if __name__ == "__main__":

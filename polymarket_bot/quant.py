@@ -19,26 +19,32 @@ from __future__ import annotations
 
 import math
 import pickle
+import json
+import csv
 from pathlib import Path
 from statistics import mean, pstdev
 from typing import Any
 
 try:
     from .config import (
+        BASE_DIR,
         MAX_PRICE,
         MAX_SPREAD,
         MIN_BOOK_LIQUIDITY_USDC,
         MIN_PRICE,
+        MIN_VOLUME_24H_USDC,
         QUANT_MA_LONG,
         QUANT_MA_SHORT,
         QUANT_MOMENTUM_LOOKBACK,
     )
 except ImportError:  # pragma: no cover
     from config import (
+        BASE_DIR,
         MAX_PRICE,
         MAX_SPREAD,
         MIN_BOOK_LIQUIDITY_USDC,
         MIN_PRICE,
+        MIN_VOLUME_24H_USDC,
         QUANT_MA_LONG,
         QUANT_MA_SHORT,
         QUANT_MOMENTUM_LOOKBACK,
@@ -70,7 +76,10 @@ _MODEL_FEATURES = [
     "order_imbalance",
     "spread",
     "liquidity_usdc",
+    "volume_24h",
+    "open_interest",
 ]
+_EXTRA_FEATURES = ["bollinger_upper", "bollinger_middle", "bollinger_lower"]
 
 
 def _prices(history: list[dict]) -> list[float]:
@@ -322,8 +331,43 @@ def _bollinger_position(last_price: float, bands: dict[str, float]) -> float:
     return max(0.0, min(1.0, (last_price - float(bands.get("lower", 0.0))) / width))
 
 
-def _feature_payload(prices: list[float], order_book: dict) -> dict[str, float]:
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _empty_feature_payload() -> dict[str, float]:
+    return {key: 0.0 for key in [*_MODEL_FEATURES, *_EXTRA_FEATURES]}
+
+
+def _activity_features(market_stats: dict[str, Any] | None) -> tuple[float, float]:
+    stats = market_stats or {}
+    return (
+        _safe_float(stats.get("volume_24h", stats.get("volume24h", stats.get("volume24hr")))),
+        _safe_float(stats.get("open_interest", stats.get("openInterest"))),
+    )
+
+
+def _feature_payload(
+    prices: list[float],
+    order_book: dict,
+    market_stats: dict[str, Any] | None = None,
+) -> dict[str, float]:
     """Build the enhanced numerical feature set used by ML and fallback logic."""
+    if not prices and not order_book.get("bids"):
+        return _empty_feature_payload()
+
     history = [{"p": p} for p in prices]
     pf = price_features(history)
     bf = book_features(order_book)
@@ -333,6 +377,7 @@ def _feature_payload(prices: list[float], order_book: dict) -> dict[str, float]:
     bands = calculate_bollinger_bands(prices)
     vwap = calculate_vwap(order_book)
     imbalance = calculate_order_imbalance(order_book)
+    volume_24h, open_interest = _activity_features(market_stats)
 
     return {
         "last_price": round(last_price, 6),
@@ -352,6 +397,8 @@ def _feature_payload(prices: list[float], order_book: dict) -> dict[str, float]:
         "order_imbalance": imbalance,
         "spread": float(bf.get("spread", 0.0) or 0.0),
         "liquidity_usdc": float(bf.get("liquidity_usdc", 0.0) or 0.0),
+        "volume_24h": volume_24h,
+        "open_interest": open_interest,
     }
 
 
@@ -391,14 +438,17 @@ def _rule_based_probability(features: dict[str, float]) -> float:
     momentum_term = _tanh(float(features.get("momentum", 0.0)) / _MOMENTUM_SCALE)
     zscore_term = -_tanh(float(features.get("zscore", 0.0)) / _ZSCORE_SCALE)
     imbalance_term = float(features.get("order_imbalance", 0.0))
+    volume = max(float(features.get("volume_24h", 0.0) or 0.0), 0.0)
+    volume_term = min(1.0, math.log1p(volume) / math.log1p(50_000.0)) if volume else 0.0
 
     score = (
-        0.20 * rsi_term
-        + 0.20 * macd_term
-        + 0.15 * bollinger_term
-        + 0.20 * momentum_term
-        + 0.15 * zscore_term
+        0.19 * rsi_term
+        + 0.19 * macd_term
+        + 0.14 * bollinger_term
+        + 0.19 * momentum_term
+        + 0.14 * zscore_term
         + 0.10 * imbalance_term
+        + 0.05 * volume_term * (1 if momentum_term + macd_term + imbalance_term >= 0 else -1)
     )
     return round(max(0.01, min(0.99, 0.5 + 0.25 * score)), 6)
 
@@ -423,7 +473,8 @@ def get_enhanced_quant_signal(market_data: dict[str, Any]) -> dict[str, Any]:
         prices = [float(market_data["current_price"])]
 
     order_book = market_data.get("order_book") or market_data.get("book") or {"bids": [], "asks": []}
-    features = _feature_payload(prices, order_book)
+    market_stats = market_data.get("market_stats") or market_data.get("stats") or market_data
+    features = _feature_payload(prices, order_book, market_stats)
 
     model = _load_quant_model()
     probability = _ml_probability(model, features) if model is not None else None
@@ -451,6 +502,7 @@ def compute_quant_signal(
     snapshot_price: float,
     history: list[dict],
     book: dict,
+    market_stats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Fuse price-history + order-book features into one directional signal.
 
@@ -487,6 +539,8 @@ def compute_quant_signal(
 
     spread = bf.get("spread", 1.0) if bf.get("available") else 1.0
     liquidity = bf.get("liquidity_usdc", 0.0) if bf.get("available") else 0.0
+    volume_24h = _optional_float((market_stats or {}).get("volume_24h"))
+    open_interest = _optional_float((market_stats or {}).get("open_interest"))
 
     reasons: list[str] = []
     if not bf.get("available"):
@@ -495,6 +549,8 @@ def compute_quant_signal(
         reasons.append(f"spread {spread:.3f} > {MAX_SPREAD}")
     if bf.get("available") and liquidity < MIN_BOOK_LIQUIDITY_USDC:
         reasons.append(f"liquidity ${liquidity:.0f} < ${MIN_BOOK_LIQUIDITY_USDC:.0f}")
+    if volume_24h is not None and volume_24h < MIN_VOLUME_24H_USDC:
+        reasons.append(f"24h volume ${volume_24h:.0f} < ${MIN_VOLUME_24H_USDC:.0f}")
     if not (MIN_PRICE <= price <= MAX_PRICE):
         reasons.append(f"price {price:.3f} outside [{MIN_PRICE}, {MAX_PRICE}]")
 
@@ -524,6 +580,127 @@ def compute_quant_signal(
         "spread": bf.get("spread"),
         "microprice": bf.get("microprice"),
         "liquidity_usdc": liquidity,
+        "volume_24h": volume_24h,
+        "open_interest": open_interest,
         "n_samples": pf.get("n_samples", 0),
         "reason": "; ".join(reasons) if reasons else "ok",
+    }
+
+
+def _load_training_records(path: Path | None = None) -> list[dict[str, Any]]:
+    candidates = [path] if path is not None else [
+        BASE_DIR / "data" / "quant_training.jsonl",
+        BASE_DIR / "data" / "full_backtest.json",
+        BASE_DIR.parent / "backtest_results.csv",
+    ]
+    records: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if candidate is None or not candidate.exists():
+            continue
+        if candidate.suffix == ".jsonl":
+            with candidate.open(encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line:
+                        try:
+                            records.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+        elif candidate.suffix == ".json":
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                for key in ("trades", "decisions", "signals", "rows"):
+                    rows = payload.get(key)
+                    if isinstance(rows, list):
+                        records.extend(dict(row) for row in rows if isinstance(row, dict))
+                        break
+            elif isinstance(payload, list):
+                records.extend(dict(row) for row in payload if isinstance(row, dict))
+        elif candidate.suffix == ".csv":
+            with candidate.open(newline="", encoding="utf-8") as fh:
+                records.extend(dict(row) for row in csv.DictReader(fh))
+    return records
+
+
+def _record_sort_key(row: dict[str, Any]) -> tuple[int, float, str]:
+    raw = row.get("timestamp", row.get("t"))
+    if raw is None:
+        return (2, 0.0, "")
+    try:
+        return (0, float(raw), "")
+    except (TypeError, ValueError):
+        return (1, 0.0, str(raw))
+
+
+def _training_examples(records: list[dict[str, Any]], horizon: int) -> tuple[list[list[float]], list[int]]:
+    by_market: dict[str, list[dict[str, Any]]] = {}
+    for row in records:
+        key = str(row.get("market_id") or row.get("condition_id") or row.get("question") or "market")
+        by_market.setdefault(key, []).append(row)
+
+    rows_x: list[list[float]] = []
+    rows_y: list[int] = []
+    for market_rows in by_market.values():
+        ordered = sorted(market_rows, key=_record_sort_key)
+        prices = _coerce_prices(ordered)
+        if not prices:
+            prices = [
+                _safe_float(row.get("close", row.get("price", row.get("current_price"))), default=-1.0)
+                for row in ordered
+            ]
+            prices = [price for price in prices if price >= 0.0]
+        if len(prices) <= horizon:
+            continue
+
+        for index in range(max(5, QUANT_MA_SHORT), len(prices) - horizon):
+            history = prices[: index + 1]
+            row = ordered[min(index, len(ordered) - 1)]
+            book = row.get("order_book") or row.get("book") or {"bids": [], "asks": []}
+            if not isinstance(book, dict):
+                book = {"bids": [], "asks": []}
+            stats = {
+                "volume_24h": row.get("volume_24h"),
+                "open_interest": row.get("open_interest"),
+            }
+            features = _feature_payload(history, book, stats)
+            rows_x.append([float(features.get(name, 0.0) or 0.0) for name in _MODEL_FEATURES])
+            rows_y.append(1 if prices[index + horizon] > prices[index] else 0)
+    return rows_x, rows_y
+
+
+def train_quant_model(
+    training_path: str | Path | None = None,
+    *,
+    horizon: int = 24,
+    output_path: str | Path = _MODEL_PATH,
+) -> dict[str, Any]:
+    """Train a RandomForest quant model from historical rows and save it."""
+    try:
+        from sklearn.ensemble import RandomForestClassifier
+    except ImportError:
+        return {"trained": False, "reason": "scikit-learn is not installed"}
+
+    records = _load_training_records(Path(training_path) if training_path else None)
+    features, labels = _training_examples(records, max(1, int(horizon)))
+    if len(features) < 10 or len(set(labels)) < 2:
+        return {
+            "trained": False,
+            "reason": "not enough labeled historical rows",
+            "examples": len(features),
+        }
+
+    model = RandomForestClassifier(n_estimators=100, random_state=42, min_samples_leaf=3)
+    model.fit(features, labels)
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("wb") as fh:
+        pickle.dump(model, fh)
+
+    return {
+        "trained": True,
+        "examples": len(features),
+        "positive_rate": round(sum(labels) / len(labels), 4),
+        "model_path": str(out),
+        "features": list(_MODEL_FEATURES),
     }

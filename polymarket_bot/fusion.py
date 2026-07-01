@@ -163,7 +163,10 @@ def fuse_signals(
     result["quant_fair_value"] = quant.get("quant_fair_value")
     result["quant_tradeable"] = quant.get("tradeable", False)
     result["volatility"] = quant.get("volatility", 0.0)
+    result["spread"] = quant.get("spread")
     result["liquidity_usdc"] = quant.get("liquidity_usdc")
+    result["volume_24h"] = quant.get("volume_24h")
+    result["open_interest"] = quant.get("open_interest")
 
     ai_edge = float(ai_signal.get("edge") or 0.0)
     ai_fair_value = _clamp_probability(ai_signal.get("fair_value_estimate", ai_signal.get("probability")))
