@@ -159,6 +159,20 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .cal-bar { height: 100%; border-radius: 3px; }
   .cal-val { font-size: 12px; font-family: var(--mono); width: 40px; text-align: right; flex-shrink: 0; }
 
+  /* Charts */
+  .chart-pad { padding: 16px 18px; }
+  .bar-row { display: grid; grid-template-columns: 96px 1fr 120px; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .bar-row:last-child { border-bottom: none; }
+  .bar-label { color: var(--text); font-size: 12px; text-transform: capitalize; }
+  .bar-track { height: 10px; background: var(--surface2); border-radius: 5px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 5px; }
+  .bar-meta { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--muted); }
+  .scatter-wrap { padding: 16px 18px; }
+  .scatter-svg { width: 100%; height: 260px; display: block; background: rgba(255,255,255,.015); border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
+  .scatter-axis { stroke: var(--border); stroke-width: 1; }
+  .scatter-grid { stroke: rgba(100,116,139,.25); stroke-width: 1; }
+  .scatter-label { fill: var(--muted); font-size: 11px; font-family: var(--mono); }
+
   /* Question cell truncation */
   .q-cell { max-width: 320px; }
   .q-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
@@ -184,6 +198,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
     .sidebar { display: none; }
     .main { padding: 16px; }
     .cal-grid { grid-template-columns: 1fr; }
+    .bar-row { grid-template-columns: 80px 1fr; }
+    .bar-meta { grid-column: 2; text-align: left; }
   }
 </style>
 </head>
@@ -272,6 +288,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <div class="card-header">Calibration</div>
         <div class="cal-grid" id="val-calibration"></div>
       </div>
+      <div class="card">
+        <div class="card-header">Category Performance</div>
+        <div class="chart-pad" id="val-category-performance"></div>
+      </div>
+      <div class="card">
+        <div class="card-header">AI Confidence vs Accuracy</div>
+        <div class="scatter-wrap" id="val-confidence-scatter"></div>
+      </div>
     </div>
 
     <!-- LIVE TRADES -->
@@ -324,9 +348,11 @@ function safeUrl(u){ if (!u) return '#'; try { const x = new URL(u, location.ori
 function fmt_pct(v) { return v != null ? (v * 100).toFixed(1) + '%' : '—'; }
 function fmt_price(v) { return v != null ? '$' + (+v).toFixed(2) : '—'; }
 function pill_conf(c) {
-  const level = String(c || 'low');
+  const score = confidenceScore(c);
+  const level = score >= 75 ? 'high' : score >= 50 ? 'medium' : 'low';
   const cls = ['high','medium','low'].includes(level) ? level : 'low';
-  return `<span class="pill pill-${cls}">${esc(level)}</span>`;
+  const label = (typeof c === 'string' && ['high','medium','low'].includes(c.toLowerCase())) ? c.toLowerCase() : `${score.toFixed(0)}%`;
+  return `<span class="pill pill-${cls}">${esc(label)}</span>`;
 }
 function pill_status(s, correct) {
   if (s === 'pending') return `<span class="pill pill-pending">pending</span>`;
@@ -345,6 +371,89 @@ function stat_card(label, value, cls, sub) {
 function empty_state(msg) {
   return `<div class="empty"><div class="empty-icon">◌</div>${msg}</div>`;
 }
+function confidenceScore(c) {
+  if (c == null) return 0;
+  if (typeof c === 'string') {
+    const t = c.trim().toLowerCase();
+    if (t === 'high') return 85;
+    if (t === 'medium') return 65;
+    if (t === 'low') return 35;
+    c = t.replace('%','');
+  }
+  let n = Number(c);
+  if (!Number.isFinite(n)) return 0;
+  if (n >= 0 && n <= 1) n *= 100;
+  return Math.max(0, Math.min(100, n));
+}
+function rollingSharpe(bets) {
+  const cutoff = Date.now() - 30 * 86400 * 1000;
+  const recent = (bets || []).filter(b => {
+    const ts = new Date(b.resolved_at || b.recorded_at || 0).getTime();
+    return Number.isFinite(ts) && ts >= cutoff && b.pnl_usdc != null;
+  });
+  const returns = recent.map(b => Number(b.pnl_usdc || 0) / Math.max(Number(b.hypothetical_usdc || b.stake_usdc || 10), 1));
+  if (returns.length < 2) return null;
+  const avg = returns.reduce((s, v) => s + v, 0) / returns.length;
+  const variance = returns.reduce((s, v) => s + Math.pow(v - avg, 2), 0) / returns.length;
+  const sd = Math.sqrt(variance);
+  return sd > 0 ? avg / sd * Math.sqrt(returns.length) : null;
+}
+function categoryPerformance(bets) {
+  const groups = {};
+  (bets || []).forEach(b => {
+    const cat = String(b.category || 'other').toLowerCase();
+    if (!groups[cat]) groups[cat] = {count:0, wins:0, pnl:0};
+    groups[cat].count += 1;
+    groups[cat].wins += b.correct ? 1 : 0;
+    groups[cat].pnl += Number(b.pnl_usdc || 0);
+  });
+  ['politics','crypto','sports'].forEach(cat => { if (!groups[cat]) groups[cat] = {count:0,wins:0,pnl:0}; });
+  return groups;
+}
+function renderCategoryPerformanceChart(targetId) {
+  const groups = categoryPerformance(DATA.resolved_bets || []);
+  const rows = ['politics','crypto','sports']
+    .concat(Object.keys(groups).filter(c => !['politics','crypto','sports'].includes(c)).sort())
+    .map(cat => [cat, groups[cat]])
+    .filter(([, s]) => s && s.count);
+  const el = document.getElementById(targetId);
+  if (!rows.length) {
+    el.innerHTML = empty_state('No category performance yet.');
+    return;
+  }
+  el.innerHTML = rows.map(([cat, s]) => {
+    const wr = s.count ? s.wins / s.count : 0;
+    const color = wr >= 0.58 ? 'var(--win)' : wr >= 0.5 ? 'var(--warn)' : 'var(--loss)';
+    return `<div class="bar-row">
+      <div class="bar-label">${esc(cat)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${Math.min(wr*100,100).toFixed(0)}%;background:${color}"></div></div>
+      <div class="bar-meta">${(wr*100).toFixed(0)}% · ${fmt_pnl(s.pnl)}</div>
+    </div>`;
+  }).join('');
+}
+function renderConfidenceScatter(targetId) {
+  const bets = (DATA.resolved_bets || []).filter(b => b.correct != null);
+  const el = document.getElementById(targetId);
+  if (!bets.length) {
+    el.innerHTML = empty_state('No confidence calibration points yet.');
+    return;
+  }
+  const w = 720, h = 260, pad = 32;
+  const x = c => pad + (confidenceScore(c) / 100) * (w - pad * 2);
+  const y = ok => ok ? pad : h - pad;
+  const points = bets.slice(-160).map(b => {
+    const color = b.correct ? 'var(--win)' : 'var(--loss)';
+    return `<circle cx="${x(b.ai_confidence ?? b.confidence)}" cy="${y(b.correct)}" r="4" fill="${color}" opacity=".78"><title>${confidenceScore(b.ai_confidence ?? b.confidence).toFixed(0)}% confidence · ${b.correct ? 'correct' : 'wrong'}</title></circle>`;
+  }).join('');
+  el.innerHTML = `<svg class="scatter-svg" viewBox="0 0 ${w} ${h}" role="img">
+    <line class="scatter-axis" x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}"></line>
+    <line class="scatter-axis" x1="${pad}" y1="${pad}" x2="${pad}" y2="${h-pad}"></line>
+    ${[25,50,75,100].map(v => `<line class="scatter-grid" x1="${x(v)}" y1="${pad}" x2="${x(v)}" y2="${h-pad}"></line><text class="scatter-label" x="${x(v)-8}" y="${h-10}">${v}</text>`).join('')}
+    <text class="scatter-label" x="4" y="${pad+4}">hit</text>
+    <text class="scatter-label" x="4" y="${h-pad+4}">miss</text>
+    ${points}
+  </svg>`;
+}
 
 function renderOverview() {
   const r = DATA.report || {};
@@ -358,6 +467,9 @@ function renderOverview() {
   const wr_cls = (perf.win_rate || 0) >= 0.55 ? 'green' : (perf.win_rate || 0) >= 0.5 ? 'accent' : 'red';
   const usage = r.token_usage || {};
   const cost = usage.cost_usd != null ? `$${(+usage.cost_usd).toFixed(4)}` : '—';
+  const sharpe = rollingSharpe(DATA.resolved_bets || []);
+  const sharpeVal = sharpe == null ? '—' : sharpe.toFixed(2);
+  const sharpeCls = sharpe == null ? '' : sharpe >= 1 ? 'green' : sharpe >= 0 ? 'accent' : 'red';
 
   document.getElementById('overview-stats').innerHTML = [
     stat_card('Markets Scanned', r.markets_scanned || 0, 'accent'),
@@ -365,6 +477,7 @@ function renderOverview() {
     stat_card('Paper Bets', DATA.paper_pending_count || 0, ''),
     stat_card('Resolved Bets', DATA.resolved_count || 0, ''),
     stat_card('Win Rate', wr, wr_cls, `${perf.total_bets || 0} resolved`),
+    stat_card('Current Sharpe', sharpeVal, sharpeCls, 'rolling 30 day'),
     stat_card('Paper P&L', pnl, pnl_cls, 'hypothetical'),
     stat_card('LLM Cost / Scan', cost, '', `${usage.total_tokens || 0} tokens`),
   ].join('');
@@ -486,6 +599,8 @@ function renderValidation() {
     document.getElementById('val-stats').innerHTML = stat_card('Status', 'No data yet', 'accent', 'Run --paper mode first');
     document.getElementById('val-recs').innerHTML = '<p style="color:var(--muted);padding:16px">Validation data will appear here once markets resolve.</p>';
     document.getElementById('val-calibration').innerHTML = '';
+    document.getElementById('val-category-performance').innerHTML = empty_state('No category performance yet.');
+    document.getElementById('val-confidence-scatter').innerHTML = empty_state('No confidence calibration points yet.');
     return;
   }
 
@@ -549,6 +664,8 @@ function renderValidation() {
         </div>`;
       }).join('')}
     </div>`;
+  renderCategoryPerformanceChart('val-category-performance');
+  renderConfidenceScatter('val-confidence-scatter');
 }
 
 function renderTrades() {

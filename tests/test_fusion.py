@@ -45,22 +45,25 @@ class FuseSignalsTests(unittest.TestCase):
 
     def test_strong_agreement_boosts_confidence(self):
         result = fuse_signals(_ai(confidence="medium"), _quant(0.5))
-        self.assertEqual(result["confidence"], "high")
+        self.assertEqual(result["confidence"], 75.0)
+        self.assertEqual(result["confidence_level"], "high")
 
     def test_mild_disagreement_shrinks_edge_and_downgrades(self):
         result = fuse_signals(_ai(confidence="medium"), _quant(-0.2))
         self.assertEqual(result["agreement"], "disagree")
-        self.assertEqual(result["confidence"], "low")
+        self.assertEqual(result["confidence"], 45.0)
+        self.assertEqual(result["confidence_level"], "low")
+        self.assertEqual(result["position_size_multiplier"], 0.3)
         self.assertLess(result["edge"], 0.12)
         self.assertEqual(result["recommended_outcome"], "Yes")  # not vetoed
 
-    def test_strong_disagreement_vetoes(self):
+    def test_strong_disagreement_discounts_without_veto(self):
         result = fuse_signals(_ai(), _quant(-0.6))
         self.assertEqual(result["agreement"], "disagree")
-        self.assertEqual(result["edge"], 0.0)
-        self.assertIsNone(result["recommended_outcome"])
-        self.assertFalse(result["news_supports_bet"])
-        self.assertIn("veto_reason", result)
+        self.assertEqual(result["position_size_multiplier"], 0.3)
+        self.assertEqual(result["recommended_outcome"], "Yes")
+        self.assertTrue(result["news_supports_bet"])
+        self.assertNotIn("veto_reason", result)
 
     def test_untradeable_book_vetoes(self):
         result = fuse_signals(_ai(), _quant(0.3, tradeable=False))
@@ -87,6 +90,7 @@ class FuseSignalsTests(unittest.TestCase):
         self.assertIn("quant", result)
         self.assertIn("ai_edge", result)
         self.assertIn("quant_edge", result)
+        self.assertIn("position_size_multiplier", result)
 
 
 if __name__ == "__main__":

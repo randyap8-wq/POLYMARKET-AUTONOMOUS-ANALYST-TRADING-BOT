@@ -30,6 +30,25 @@ def _avg_pnl(bets: list[dict]) -> float:
     return mean(b.get("pnl_usdc", 0.0) for b in bets)
 
 
+def _confidence_level(value) -> str:
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"low", "medium", "high"}:
+            return text
+        value = text.rstrip("%")
+    try:
+        raw = float(value)
+    except (TypeError, ValueError):
+        raw = 0.0
+    if 0.0 <= raw <= 1.0:
+        raw *= 100.0
+    if raw >= 75:
+        return "high"
+    if raw >= 50:
+        return "medium"
+    return "low"
+
+
 def generate_performance_report() -> dict:
     resolved = load_resolved()
     total = len(resolved)
@@ -47,9 +66,7 @@ def generate_performance_report() -> dict:
     # By confidence
     conf_groups = {"high": [], "medium": [], "low": []}
     for b in resolved:
-        c = b.get("confidence", "low")
-        if c in conf_groups:
-            conf_groups[c].append(b)
+        conf_groups[_confidence_level(b.get("confidence_level", b.get("confidence", "low")))].append(b)
 
     conf_stats = {
         level: {

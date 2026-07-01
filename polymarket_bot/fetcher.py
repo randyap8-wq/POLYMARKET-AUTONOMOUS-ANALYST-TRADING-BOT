@@ -9,11 +9,22 @@ import requests
 try:
     from .config import GAMMA_BASE, MARKET_FILTERS, DISABLED_CATEGORIES
     from .categories import categorize
+    from .utils import retry_with_backoff
 except ImportError:  # pragma: no cover
     from config import GAMMA_BASE, MARKET_FILTERS, DISABLED_CATEGORIES
     from categories import categorize
+    from utils import retry_with_backoff
 
 LOGGER = logging.getLogger("fetcher")
+
+
+@retry_with_backoff(max_retries=5, base_delay=1)
+def _fetch_gamma_markets(params: dict) -> list[dict]:
+    """Fetch one Gamma API market page with transient-error retries."""
+    response = requests.get(f"{GAMMA_BASE}/markets", params=params, timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+    return payload if isinstance(payload, list) else [payload]
 
 
 def _parse_end_date(raw_value: str) -> datetime:
@@ -32,20 +43,16 @@ def fetch_markets() -> list[dict]:
     pages = 3
     for offset in range(0, limit * pages, limit):
         try:
-            response = requests.get(
-                f"{GAMMA_BASE}/markets",
-                params={
+            page = _fetch_gamma_markets(
+                {
                     "active": "true",
                     "closed": "false",
                     "limit": MARKET_FILTERS["limit"],
                     "offset": offset,
                     "order": "volume",
                     "ascending": "false",
-                },
-                timeout=30,
+                }
             )
-            response.raise_for_status()
-            page = response.json()
             if not page:
                 break
             for market in page:

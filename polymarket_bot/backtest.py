@@ -27,10 +27,12 @@ try:
     from .config import BASE_DIR, GAMMA_BASE
     from .market_data import fetch_price_history
     from .quant import compute_quant_signal
+    from .utils import retry_with_backoff
 except ImportError:  # pragma: no cover
     from config import BASE_DIR, GAMMA_BASE
     from market_data import fetch_price_history
     from quant import compute_quant_signal
+    from utils import retry_with_backoff
 
 LOGGER = logging.getLogger("backtest")
 
@@ -38,6 +40,18 @@ BACKTEST_PATH = BASE_DIR / "data" / "backtest.json"
 
 _MIN_SAMPLES = 8
 _EMPTY_BOOK = {"bids": [], "asks": []}
+
+
+@retry_with_backoff(max_retries=5, base_delay=1)
+def _fetch_closed_gamma_markets(limit: int) -> list[dict]:
+    response = requests.get(
+        f"{GAMMA_BASE}/markets",
+        params={"closed": "true", "limit": limit, "order": "volume", "ascending": "false"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return payload if isinstance(payload, list) else [payload]
 
 
 def _clamp_price(price: float) -> float:
@@ -94,13 +108,7 @@ def evaluate_market(
 def _fetch_resolved_markets(days_back: int, limit: int) -> list[dict]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
     try:
-        resp = requests.get(
-            f"{GAMMA_BASE}/markets",
-            params={"closed": "true", "limit": limit, "order": "volume", "ascending": "false"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        raw = resp.json()
+        raw = _fetch_closed_gamma_markets(limit)
     except Exception as exc:
         LOGGER.error("failed to fetch closed markets: %s", exc)
         return []

@@ -25,6 +25,30 @@ except ImportError:  # pragma: no cover
     from risk import size_positions
 
 
+def _confidence_score(value) -> float:
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in CONFIDENCE_RANK:
+            return {"low": 35.0, "medium": 65.0, "high": 85.0}[text]
+        value = text.rstrip("%")
+    try:
+        raw = float(value)
+    except (TypeError, ValueError):
+        raw = 0.0
+    if 0.0 <= raw <= 1.0:
+        raw *= 100.0
+    return max(0.0, min(100.0, raw))
+
+
+def _confidence_level(value) -> str:
+    score = _confidence_score(value)
+    if score >= 75.0:
+        return "high"
+    if score >= 50.0:
+        return "medium"
+    return "low"
+
+
 def _kelly_fraction(price: float, fair_value: float) -> float:
     """Half-Kelly stake fraction for a $1-payout binary share.
 
@@ -46,7 +70,7 @@ def build_report(all_markets, scored_results, token_usage: dict | None = None) -
         result
         for result in scored_results
         if result["edge"] >= MIN_EDGE
-        and CONFIDENCE_RANK[result["confidence"]] >= CONFIDENCE_RANK[MIN_CONFIDENCE]
+        and CONFIDENCE_RANK[_confidence_level(result.get("confidence_level", result.get("confidence")))] >= CONFIDENCE_RANK[MIN_CONFIDENCE]
         and result["news_supports_bet"]
         and result["recommended_outcome"] is not None
         and MIN_PRICE <= float(result.get("current_price") or 0.0) <= MAX_PRICE
@@ -74,7 +98,9 @@ def build_report(all_markets, scored_results, token_usage: dict | None = None) -
                 "quant_score": item.get("quant_score"),
                 "agreement": item.get("agreement"),
                 "blended_fair_value": item.get("blended_fair_value"),
-                "confidence": item["confidence"],
+                "probability": item.get("probability", item.get("fair_value_estimate")),
+                "confidence": _confidence_score(item.get("confidence")),
+                "confidence_level": item.get("confidence_level", _confidence_level(item.get("confidence"))),
                 "base_rate": item.get("base_rate"),
                 "evidence_summary": item.get("evidence_summary", {}),
                 "bayesian_updates": item.get("bayesian_updates", []),
@@ -86,6 +112,7 @@ def build_report(all_markets, scored_results, token_usage: dict | None = None) -
                     float(item.get("fair_value_estimate") or 0.0),
                 ),
                 "stake_usdc": item.get("stake_usdc", 0.0),
+                "position_size_multiplier": item.get("position_size_multiplier", 1.0),
                 "vol_factor": item.get("vol_factor"),
                 "volatility": item.get("volatility"),
                 "liquidity_usdc": item.get("liquidity_usdc"),
@@ -142,7 +169,7 @@ def print_summary(report: dict) -> None:
     print(" ----  ------  ------  ---------  ------  --------  -----------------------")
     for item in report["opportunities"]:
         print(
-            f"  #{item['rank']:<1}   +{item['edge']:.2f}   {item['confidence']:<6}  "
+            f"  #{item['rank']:<1}   +{item['edge']:.2f}   {item.get('confidence_level', _confidence_level(item.get('confidence'))):<6}  "
             f"{str(item.get('agreement') or '-'):<9}  ${item.get('stake_usdc', 0):<5.1f}  "
             f"{str(item['recommended_outcome']):<8}  {item['question'][:30]}"
         )

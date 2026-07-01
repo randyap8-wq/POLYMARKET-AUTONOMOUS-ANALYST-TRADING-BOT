@@ -11,10 +11,12 @@ try:
     from .config import GAMMA_BASE, BASE_DIR
     from .categories import categorize
     from .scorer import score_market, reset_token_usage
+    from .utils import retry_with_backoff
 except ImportError:  # pragma: no cover
     from config import GAMMA_BASE, BASE_DIR
     from categories import categorize
     from scorer import score_market, reset_token_usage
+    from utils import retry_with_backoff
 
 LOGGER = logging.getLogger("backfill")
 
@@ -23,22 +25,28 @@ RESOLVED_PATH = DATA_DIR / "resolved.jsonl"
 DATA_DIR.mkdir(exist_ok=True)
 
 
+@retry_with_backoff(max_retries=5, base_delay=1)
+def _fetch_closed_markets(limit: int) -> list[dict]:
+    resp = requests.get(
+        f"{GAMMA_BASE}/markets",
+        params={
+            "closed": "true",
+            "limit": limit,
+            "order": "volume",
+            "ascending": "false",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload if isinstance(payload, list) else [payload]
+
+
 def _fetch_recently_closed(days_back: int = 14, limit: int = 50) -> list[dict]:
     """Fetch markets that closed in the last `days_back` days."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
     try:
-        resp = requests.get(
-            f"{GAMMA_BASE}/markets",
-            params={
-                "closed": "true",
-                "limit": limit,
-                "order": "volume",
-                "ascending": "false",
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        all_markets = resp.json()
+        all_markets = _fetch_closed_markets(limit)
     except Exception as exc:
         LOGGER.error("failed to fetch closed markets: %s", exc)
         return []

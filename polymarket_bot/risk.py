@@ -125,10 +125,11 @@ def size_positions(
         fair_value = float(opp.get("fair_value_estimate") or 0.0)
         volatility = float(opp.get("volatility") or 0.0)
         category = opp.get("category", "other")
+        position_multiplier = max(0.0, min(1.0, float(opp.get("position_size_multiplier", 1.0) or 0.0)))
 
         base_fraction = kelly_fraction(price, fair_value)
         vol_factor = volatility_factor(volatility)
-        stake = min(bankroll * base_fraction * vol_factor * dd_factor, MAX_BET_USDC)
+        stake = min(bankroll * base_fraction * vol_factor * dd_factor * position_multiplier, MAX_BET_USDC)
 
         # Concurrency cap.
         if n_sized >= MAX_CONCURRENT_POSITIONS:
@@ -157,6 +158,7 @@ def size_positions(
         opp["stake_usdc"] = stake
         opp["stake_fraction"] = round(base_fraction, 4)
         opp["vol_factor"] = vol_factor
+        opp["position_size_multiplier"] = position_multiplier
         opp["drawdown_factor"] = dd_factor
 
     summary = {
