@@ -62,6 +62,30 @@ class BuildReportTests(unittest.TestCase):
         report = build_report([], [], token_usage=usage)
         self.assertEqual(report["token_usage"], usage)
 
+    def test_structured_reasoning_fields_are_passed_through(self):
+        scored = [
+            _scored(
+                base_rate=0.42,
+                evidence_summary={"official_data": ["filing"], "market_signals": ["spread tight"]},
+                bayesian_updates=[{"direction": "toward", "magnitude": "medium", "evidence": "filing", "probability_after": 0.45}],
+                key_risks=["late reversal"],
+                information_quality="high",
+                edge_threshold_met=True,
+                news_headlines=["Official filing published"],
+            )
+        ]
+
+        report = build_report([{"id": "m1"}], scored)
+        opportunity = report["opportunities"][0]
+
+        self.assertEqual(opportunity["base_rate"], 0.42)
+        self.assertEqual(opportunity["evidence_summary"]["official_data"], ["filing"])
+        self.assertEqual(opportunity["bayesian_updates"][0]["probability_after"], 0.45)
+        self.assertEqual(opportunity["key_risks"], ["late reversal"])
+        self.assertEqual(opportunity["information_quality"], "high")
+        self.assertTrue(opportunity["edge_threshold_met"])
+        self.assertEqual(opportunity["news_headlines"], ["Official filing published"])
+
     def test_kelly_fraction_positive_when_edge_real(self):
         self.assertGreater(_kelly_fraction(0.25, 0.45), 0.0)
 

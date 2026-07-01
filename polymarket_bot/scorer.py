@@ -39,6 +39,23 @@ LOGGER = logging.getLogger("scorer")
 
 _client = None
 
+ANALYTICAL_EDGE_THRESHOLD = 0.02
+_EVIDENCE_KEYS = ("official_data", "reputable_reporting", "market_signals", "social_or_unverified")
+_CATEGORY_GUIDANCE = {
+    "politics": (
+        "Weight polling averages, official election/admin data, court filings, "
+        "and electoral mechanics. Treat single polls and partisan commentary as weak evidence."
+    ),
+    "crypto": (
+        "Consider on-chain metrics, ETF/fund-flow data, exchange liquidity, major "
+        "wallet movement, protocol events, and macro rate/risk conditions."
+    ),
+    "sports": (
+        "Weight official injury reports, lineup news, rest/travel spots, recent "
+        "form, matchup history, and weather for outdoor events."
+    ),
+}
+
 _TOKEN_USAGE = {
     "calls": 0,
     "prompt_tokens": 0,
@@ -113,38 +130,130 @@ def _days_remaining(end_date: str) -> str:
         return "unknown time remaining"
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_probability(value: Any, default: float = 0.0) -> float:
+    return max(0.0, min(1.0, _safe_float(value, default)))
+
+
+def _coerce_string_list(value: Any, limit: int = 5) -> list[str]:
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else [value]
+    result = []
+    for item in items:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if text:
+            result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _coerce_evidence_summary(value: Any) -> dict[str, list[str]]:
+    summary = value if isinstance(value, dict) else {}
+    return {key: _coerce_string_list(summary.get(key), limit=4) for key in _EVIDENCE_KEYS}
+
+
+def _coerce_bayesian_updates(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+
+    updates = []
+    for item in value[:5]:
+        if isinstance(item, dict):
+            probability = item.get("probability_after")
+            probability_after = None if probability is None else _coerce_probability(probability)
+            updates.append(
+                {
+                    "direction": str(item.get("direction") or "neutral").lower(),
+                    "magnitude": str(item.get("magnitude") or "small").lower(),
+                    "evidence": str(item.get("evidence") or "").strip(),
+                    "probability_after": probability_after,
+                }
+            )
+        else:
+            updates.append(
+                {
+                    "direction": "neutral",
+                    "magnitude": "small",
+                    "evidence": str(item).strip(),
+                    "probability_after": None,
+                }
+            )
+    return updates
+
+
+def _category_guidance(category: str) -> str:
+    return _CATEGORY_GUIDANCE.get(
+        str(category or "").lower(),
+        "Use category-specific primary sources where available, then reputable reporting, then market/price signals, and treat unsourced social chatter as weak evidence.",
+    )
+
+
+def _format_liquidity_context(market: dict) -> str:
+    lines = [f"Total volume traded: ${_safe_float(market.get('volume')):,.0f}"]
+    liquidity = market.get("liquidity_usdc", market.get("liquidity"))
+    if liquidity is not None:
+        lines.append(f"Displayed liquidity: ${_safe_float(liquidity):,.0f}")
+    spread = market.get("spread")
+    if spread is not None:
+        lines.append(f"Quoted spread: {_safe_float(spread) * 100:.1f}%")
+    return "\n".join(lines)
+
+
 def _build_prompt(market: dict) -> str:
     outcomes = market.get("outcomes", [])
     prices = market.get("prices", [])
-    outcomes_str = "\n".join(
-        f"  {outcome}: current market price {price:.2f} (implied probability {price * 100:.1f}%)"
-        for outcome, price in zip(outcomes, prices)
-    )
+    outcome_lines = []
+    for outcome, raw_price in zip(outcomes, prices):
+        price = _safe_float(raw_price)
+        outcome_lines.append(
+            f"  {outcome}: current market price {price:.2f} (implied probability {price * 100:.1f}%)"
+        )
+    outcomes_str = "\n".join(outcome_lines) or "  (no outcome prices supplied)"
     category = market.get("category", "general")
 
-    return f"""You are a prediction market analyst with access to Google Search.
+    return f"""You are a disciplined prediction market analyst with access to Google Search.
 
 Market question: {market.get("question", "")}
 Category: {category}
-Market closes: {market.get("end_date", "unknown")} ({_days_remaining(market.get("end_date", ""))})
-Total volume traded: ${market.get("volume", 0):,.0f}
+Resolution date: {market.get("end_date", "unknown")} ({_days_remaining(market.get("end_date", ""))})
 Market URL: {market.get("url", "")}
 
 Current outcome prices:
 {outcomes_str}
 
-TASK:
-1. Use Google Search to find news and information from the LAST FEW DAYS relevant to this market.
-2. Search for both supporting evidence AND counter-evidence for each outcome.
-3. Based on what you find, determine if any outcome is significantly mispriced.
+Liquidity / tradeability context:
+{_format_liquidity_context(market)}
 
-A market is mispriced when recent news suggests the true probability differs
-meaningfully from the current price. A 5-cent edge (0.05) is the minimum worth
-noting. Under 10 cents, be skeptical. Over 15 cents with strong news support is
-actionable. Weigh the counter-evidence seriously: if it materially undercuts the
-case, lower your confidence or decline to bet.
+ANALYSIS PATH:
+1. Decompose the market into the exact resolution criteria, likely drivers, and time remaining.
+2. Set a base rate before looking at the latest news.
+3. Search for recent supporting evidence and counter-evidence for each outcome.
+4. Apply this evidence hierarchy: official data / filings / primary sources > reputable reporting and expert consensus > market/liquidity signals > social media or unsourced commentary.
+5. Make Bayesian updates from the base rate. State the main updates in the JSON.
+6. Compress estimates toward 50% when evidence is thin, stale, contradictory, or outside your expertise.
+7. Calculate edge as fair_value_estimate minus current_price for the recommended outcome.
 
-Return ONLY a valid JSON object — no markdown, no explanation outside the JSON:
+Category-specific guidance:
+{_category_guidance(str(category))}
+
+A market is mispriced only when the evidence-supported fair value differs from
+the current price by more than {ANALYTICAL_EDGE_THRESHOLD:.2f}. Treat 2-5 cents
+as a weak analytical edge, under 10 cents with skepticism, and over 15 cents as
+actionable only when evidence quality is high. Weigh counter-evidence seriously:
+if it materially undercuts the case, lower confidence or decline to bet.
+
+Return ONLY a valid JSON object with this schema. No markdown, no explanation
+outside the JSON:
 
 {{
   "recommended_outcome": "<outcome label or null if no clear edge>",
@@ -153,14 +262,33 @@ Return ONLY a valid JSON object — no markdown, no explanation outside the JSON
   "fair_value_estimate": <float — your probability estimate>,
   "edge": <fair_value_estimate minus current_price>,
   "confidence": "<low|medium|high>",
+  "base_rate": <float probability before latest evidence>,
+  "evidence_summary": {{
+    "official_data": ["<primary-source evidence>"],
+    "reputable_reporting": ["<reported evidence>"],
+    "market_signals": ["<price/liquidity/positioning signal>"],
+    "social_or_unverified": ["<weak evidence, if any>"]
+  }},
+  "bayesian_updates": [
+    {{
+      "direction": "<toward|away|neutral>",
+      "magnitude": "<small|medium|large>",
+      "evidence": "<what changed the estimate>",
+      "probability_after": <float>
+    }}
+  ],
   "reasoning": "<2-3 sentences max — what news drives this and why>",
+  "key_risks": ["<risk that could break the thesis>", "<another risk>"],
+  "information_quality": "<low|medium|high>",
+  "edge_threshold_met": <true|false>,
   "news_supports_bet": <true|false>,
   "counter_evidence_considered": <true|false>,
   "news_headlines": ["<headline 1>", "<headline 2>", "<headline 3>"]
 }}
 
-If news is absent, contradictory, or the market looks fairly priced, set
-recommended_outcome to null and edge to 0. Do not force a pick.
+If news is absent, contradictory, stale, low quality, or the edge is <=
+{ANALYTICAL_EDGE_THRESHOLD:.2f}, set recommended_outcome to null, edge to 0,
+edge_threshold_met to false, and news_supports_bet to false. Do not force a pick.
 """.strip()
 
 
@@ -193,7 +321,7 @@ def _call_gemini(prompt: str, use_pro: bool = False) -> dict[str, Any] | None:
     config = types.GenerateContentConfig(
         tools=tools or None,
         temperature=0.1,
-        max_output_tokens=700,
+        max_output_tokens=1200,
     )
 
     raw = ""
@@ -229,8 +357,15 @@ def _neutral_score(market: dict, reason: str) -> dict[str, Any]:
         "edge": 0.0,
         "confidence": "low",
         "reasoning": reason,
+        "base_rate": 0.5,
+        "evidence_summary": _coerce_evidence_summary({}),
+        "bayesian_updates": [],
+        "key_risks": [],
+        "information_quality": "low",
+        "edge_threshold_met": False,
         "news_supports_bet": False,
         "counter_evidence_considered": False,
+        "news_headlines": [],
         "token_id": None,
         "condition_id": market.get("condition_id", ""),
         "category": market.get("category", "other"),
@@ -253,29 +388,54 @@ def _coerce_score(market: dict, score: dict[str, Any]) -> dict[str, Any]:
     recommended_outcome = normalized.get("recommended_outcome")
     if index is not None and 0 <= index < len(outcomes) and not recommended_outcome:
         recommended_outcome = outcomes[index]
+    if recommended_outcome in outcomes and index is None:
+        index = outcomes.index(recommended_outcome)
     if recommended_outcome not in outcomes:
         recommended_outcome = None
         index = None
 
-    current_price = normalized.get("current_price")
-    if (
-        (current_price is None or float(current_price or 0) <= 0)
-        and index is not None
-        and 0 <= index < len(prices)
-    ):
-        current_price = prices[index]
+    current_price = _coerce_probability(normalized.get("current_price"), 0.0)
+    if current_price <= 0 and index is not None and 0 <= index < len(prices):
+        current_price = _coerce_probability(prices[index], 0.0)
+
+    fair_value = _coerce_probability(normalized.get("fair_value_estimate"), 0.0)
+    edge = _safe_float(normalized.get("edge"), 0.0)
+    if recommended_outcome and current_price > 0 and fair_value > 0:
+        edge = round(fair_value - current_price, 4)
+
+    news_supports_bet = bool(normalized.get("news_supports_bet", False))
+    if not recommended_outcome or edge <= ANALYTICAL_EDGE_THRESHOLD:
+        recommended_outcome = None
+        index = None
+        edge = 0.0
+        news_supports_bet = False
+
+    confidence = str(normalized.get("confidence") or "low").lower()
+    if confidence not in {"low", "medium", "high"}:
+        confidence = "low"
+
+    information_quality = str(normalized.get("information_quality") or "low").lower()
+    if information_quality not in {"low", "medium", "high"}:
+        information_quality = "low"
 
     normalized.update(
         {
             "recommended_outcome": recommended_outcome,
             "recommended_outcome_index": index,
-            "current_price": float(current_price or 0.0),
-            "fair_value_estimate": float(normalized.get("fair_value_estimate") or 0.0),
-            "edge": float(normalized.get("edge") or 0.0),
-            "confidence": str(normalized.get("confidence") or "low").lower(),
+            "current_price": current_price,
+            "fair_value_estimate": fair_value,
+            "edge": edge,
+            "confidence": confidence,
+            "base_rate": _coerce_probability(normalized.get("base_rate"), 0.5),
+            "evidence_summary": _coerce_evidence_summary(normalized.get("evidence_summary")),
+            "bayesian_updates": _coerce_bayesian_updates(normalized.get("bayesian_updates")),
             "reasoning": str(normalized.get("reasoning") or ""),
-            "news_supports_bet": bool(normalized.get("news_supports_bet", False)),
+            "key_risks": _coerce_string_list(normalized.get("key_risks"), limit=5),
+            "information_quality": information_quality,
+            "edge_threshold_met": bool(recommended_outcome and edge > ANALYTICAL_EDGE_THRESHOLD),
+            "news_supports_bet": news_supports_bet,
             "counter_evidence_considered": bool(normalized.get("counter_evidence_considered", False)),
+            "news_headlines": _coerce_string_list(normalized.get("news_headlines"), limit=5),
             "token_id": normalized.get("token_id"),
             "condition_id": market.get("condition_id", ""),
             "category": market.get("category", "other"),
