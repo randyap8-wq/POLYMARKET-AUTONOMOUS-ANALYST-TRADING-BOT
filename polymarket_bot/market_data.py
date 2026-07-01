@@ -106,3 +106,48 @@ def fetch_market_tokens(condition_id: str) -> list[dict[str, Any]]:
         LOGGER.debug("market tokens fetch failed for %s: %s", condition_id, exc)
         return []
     return payload.get("tokens", [])
+
+
+def _first_number(payload: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def fetch_market_stats(condition_id: str) -> dict[str, float]:
+    """Return activity stats for a CLOB market.
+
+    The CLOB/Gamma payload names vary by endpoint version, so the parser accepts
+    the common spellings and returns only normalized keys. Empty dict on failure.
+    """
+    if not condition_id:
+        return {}
+    try:
+        payload = _get_json(f"{CLOB_BASE}/markets/{condition_id}")
+    except Exception as exc:  # pragma: no cover - network dependent
+        LOGGER.debug("market stats fetch failed for %s: %s", condition_id, exc)
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    volume_24h = _first_number(
+        payload,
+        ("volume_24h", "volume24h", "volume24hr", "volume_24hr", "volume24H", "volumeNum24Hr"),
+    )
+    open_interest = _first_number(
+        payload,
+        ("open_interest", "openInterest", "open_interest_usdc", "openInterestUsd"),
+    )
+
+    stats: dict[str, float] = {}
+    if volume_24h is not None:
+        stats["volume_24h"] = volume_24h
+    if open_interest is not None:
+        stats["open_interest"] = open_interest
+    return stats

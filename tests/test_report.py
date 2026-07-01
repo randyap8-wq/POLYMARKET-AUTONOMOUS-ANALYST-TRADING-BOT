@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
+from polymarket_bot import report as report_module
 from polymarket_bot.report import build_report, _kelly_fraction
 
 
@@ -91,6 +93,11 @@ class BuildReportTests(unittest.TestCase):
 
     def test_kelly_fraction_zero_without_edge(self):
         self.assertEqual(_kelly_fraction(0.50, 0.50), 0.0)
+
+    def test_dynamic_min_edge_uses_spread_and_volatility(self):
+        with patch.object(report_module, "DYNAMIC_EDGE", True):
+            threshold = report_module._dynamic_min_edge({"spread": 0.03, "volatility": 0.01})
+        self.assertEqual(threshold, 0.05)
 
 
 if __name__ == "__main__":

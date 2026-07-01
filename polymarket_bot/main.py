@@ -19,7 +19,13 @@ def main():
     parser.add_argument("--backfill",  action="store_true", help="Score recently closed markets and bootstrap resolved.jsonl")
     parser.add_argument("--backfill-days", type=int, default=14, help="How many days back to look for closed markets (default 14)")
     parser.add_argument("--backtest",  action="store_true", help="Point-in-time quant backtest on resolved markets (no look-ahead bias)")
+    parser.add_argument("--backtest-full", action="store_true", help="Full pipeline backtest with cached/proxy AI, quant fusion, and risk sizing")
+    parser.add_argument("--backtest-full-live-ai", action="store_true", help="Allow live Gemini calls during --backtest-full when no cached score exists")
     parser.add_argument("--backtest-days", type=int, default=30, help="How many days back to look for resolved markets (default 30)")
+    parser.add_argument("--backtest-limit", type=int, default=60, help="Resolved market fetch limit for backtests (default 60)")
+    parser.add_argument("--train-quant", action="store_true", help="Train the optional ML quant model from historical rows and exit")
+    parser.add_argument("--train-quant-path", type=str, default="", help="Optional JSON/JSONL/CSV training data path for --train-quant")
+    parser.add_argument("--simulate-risk", action="store_true", help="Tune risk settings using data/full_backtest.json and exit")
     parser.add_argument("--loop",      type=int, default=0, help="Repeat every N minutes (0 = run once)")
     parser.add_argument("--host",      type=str, default=DASHBOARD_HOST, help="Dashboard bind host. Defaults to 127.0.0.1 (localhost) or the DASHBOARD_HOST env var. Pass --host 0.0.0.0 (or set DASHBOARD_HOST=0.0.0.0) for VPS/remote access, and put it behind a firewall/reverse proxy/auth.")
     parser.add_argument("--port",      type=int, default=8080, help="Dashboard port (default 8080)")
@@ -51,7 +57,38 @@ def main():
             from .backtest import run_backtest
         except ImportError:
             from backtest import run_backtest
-        run_backtest(days_back=args.backtest_days)
+        run_backtest(days_back=args.backtest_days, limit=args.backtest_limit)
+        sys.exit(0)
+
+    # --backtest-full: production path replay with cached/proxy AI and risk sizing
+    if args.backtest_full:
+        try:
+            from .backtest_full import run_full_backtest
+        except ImportError:
+            from backtest_full import run_full_backtest
+        run_full_backtest(days_back=args.backtest_days, limit=args.backtest_limit, allow_live_ai=args.backtest_full_live_ai)
+        sys.exit(0)
+
+    # --train-quant: fit the optional sklearn model and exit
+    if args.train_quant:
+        try:
+            from .quant import train_quant_model
+        except ImportError:
+            from quant import train_quant_model
+        summary = train_quant_model(args.train_quant_path or None)
+        if summary.get("trained"):
+            print(f"[quant] trained model on {summary['examples']} examples -> {summary['model_path']}")
+        else:
+            print(f"[quant] model not trained: {summary.get('reason', 'unknown reason')}")
+        sys.exit(0)
+
+    # --simulate-risk: parameter sweep over full-backtest decisions and exit
+    if args.simulate_risk:
+        try:
+            from .simulate import run_simulation
+        except ImportError:
+            from simulate import run_simulation
+        run_simulation()
         sys.exit(0)
 
     # --dashboard: launch web UI and exit

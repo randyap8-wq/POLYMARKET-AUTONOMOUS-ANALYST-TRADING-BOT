@@ -11,12 +11,15 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timezone
+import threading
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 try:
     from .config import (
         GEMINI_API_KEY,
+        GEMINI_CACHE_PATH,
+        GEMINI_CACHE_TTL_HOURS,
         GEMINI_MODEL,
         GEMINI_MODEL_PRO,
         GEMINI_PRICING,
@@ -28,6 +31,8 @@ try:
 except ImportError:  # pragma: no cover
     from config import (
         GEMINI_API_KEY,
+        GEMINI_CACHE_PATH,
+        GEMINI_CACHE_TTL_HOURS,
         GEMINI_MODEL,
         GEMINI_MODEL_PRO,
         GEMINI_PRICING,
@@ -40,6 +45,7 @@ except ImportError:  # pragma: no cover
 LOGGER = logging.getLogger("scorer")
 
 _client = None
+_CACHE_LOCK = threading.RLock()
 
 ANALYTICAL_EDGE_THRESHOLD = 0.02
 _EVIDENCE_KEYS = ("official_data", "reputable_reporting", "market_signals", "social_or_unverified")
@@ -58,6 +64,83 @@ _TOKEN_USAGE = {
     "total_tokens": 0,
     "cost_usd": 0.0,
 }
+
+
+def _cache_date(market: dict) -> str:
+    raw = market.get("cache_date") or market.get("entry_date")
+    if raw:
+        return str(raw)[:10]
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _cache_matches(entry: dict[str, Any], condition_id: str, cache_date: str) -> bool:
+    return entry.get("condition_id") == condition_id and entry.get("date") == cache_date
+
+
+def read_cached_score(
+    market: dict,
+    *,
+    max_age_hours: float | None = GEMINI_CACHE_TTL_HOURS,
+) -> dict[str, Any] | None:
+    """Return the newest cached Gemini score for this market/date, if valid."""
+    condition_id = str(market.get("condition_id") or "")
+    if not condition_id or not GEMINI_CACHE_PATH.exists():
+        return None
+    cache_date = _cache_date(market)
+    now = datetime.now(timezone.utc)
+    newest: dict[str, Any] | None = None
+
+    with _CACHE_LOCK:
+        try:
+            with GEMINI_CACHE_PATH.open(encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not _cache_matches(entry, condition_id, cache_date):
+                        continue
+                    timestamp = _parse_timestamp(entry.get("timestamp"))
+                    if max_age_hours is not None and max_age_hours > 0:
+                        if timestamp is None or now - timestamp > timedelta(hours=max_age_hours):
+                            continue
+                    newest = entry
+        except OSError as exc:
+            LOGGER.debug("Gemini cache read failed for %s: %s", condition_id, exc)
+            return None
+
+    score = newest.get("score") if newest else None
+    return dict(score) if isinstance(score, dict) else None
+
+
+def write_cached_score(market: dict, score: dict[str, Any]) -> None:
+    """Append a normalized score to the Gemini JSONL cache."""
+    condition_id = str(market.get("condition_id") or "")
+    if not condition_id:
+        return
+    entry = {
+        "condition_id": condition_id,
+        "date": _cache_date(market),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "score": score,
+    }
+    with _CACHE_LOCK:
+        GEMINI_CACHE_PATH.parent.mkdir(exist_ok=True)
+        with GEMINI_CACHE_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
 
 
 def _get_client():
@@ -487,6 +570,11 @@ def score_market(market: dict, news: list[dict] | None = None) -> dict | None:
     The ``news`` parameter is accepted for backwards compatibility but ignored —
     Gemini fetches its own news internally via search grounding.
     """
+    cached = read_cached_score(market)
+    if cached is not None:
+        LOGGER.debug("using cached Gemini score for %s", market.get("condition_id", ""))
+        return cached
+
     if not GEMINI_API_KEY:
         LOGGER.warning("GEMINI_API_KEY is not configured; skipping market scoring")
         return None
@@ -518,4 +606,5 @@ def score_market(market: dict, news: list[dict] | None = None) -> dict | None:
                 normalized["confidence_level"] = "medium"
                 normalized["pro_recheck_disagreed"] = True
 
+    write_cached_score(market, normalized)
     return normalized

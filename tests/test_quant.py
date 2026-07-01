@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from polymarket_bot import quant
-from polymarket_bot.quant import book_features, compute_quant_signal, price_features
+from polymarket_bot.quant import _feature_payload, book_features, compute_quant_signal, price_features
 
 
 def _rising(n=30, start=0.30, step=0.01):
@@ -96,6 +96,31 @@ class QuantSignalTests(unittest.TestCase):
         sig = compute_quant_signal(0.50, [], {"bids": [], "asks": []})
         self.assertFalse(sig["tradeable"])
         self.assertFalse(sig["available"])
+
+    def test_empty_feature_payload_zeroes_all_model_features(self):
+        features = _feature_payload([], {"bids": [], "asks": []})
+        for key in (
+            "last_price",
+            "momentum",
+            "velocity",
+            "volatility",
+            "zscore",
+            "rsi",
+            "macd_line",
+            "macd_signal",
+            "macd_histogram",
+            "bb_position",
+            "vwap",
+            "order_imbalance",
+            "spread",
+            "liquidity_usdc",
+        ):
+            self.assertEqual(features[key], 0.0)
+
+    def test_low_24h_volume_blocks_tradeability_when_available(self):
+        sig = compute_quant_signal(0.50, _rising(), LIQUID_BOOK, {"volume_24h": 1000.0})
+        self.assertFalse(sig["tradeable"])
+        self.assertIn("24h volume", sig["reason"])
 
 
 if __name__ == "__main__":

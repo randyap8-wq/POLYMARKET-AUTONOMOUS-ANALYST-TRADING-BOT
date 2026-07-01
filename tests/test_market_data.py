@@ -58,5 +58,19 @@ class OrderBookTests(unittest.TestCase):
         self.assertEqual(book["bids"], [])
 
 
+class MarketStatsTests(unittest.TestCase):
+    @patch("polymarket_bot.market_data.requests.get")
+    def test_parses_activity_stats(self, mock_get):
+        mock_get.return_value = _resp({"volume24hr": "12345.6", "openInterest": "789"})
+        stats = market_data.fetch_market_stats("cond")
+        self.assertEqual(stats["volume_24h"], 12345.6)
+        self.assertEqual(stats["open_interest"], 789.0)
+
+    @patch("polymarket_bot.market_data.requests.get")
+    def test_stats_failure_returns_empty(self, mock_get):
+        mock_get.side_effect = RuntimeError("boom")
+        self.assertEqual(market_data.fetch_market_stats("cond"), {})
+
+
 if __name__ == "__main__":
     unittest.main()

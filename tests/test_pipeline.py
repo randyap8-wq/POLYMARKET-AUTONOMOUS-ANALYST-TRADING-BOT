@@ -47,6 +47,11 @@ def _ai_pick():
 
 
 class PipelineTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.object(pipeline, "fetch_market_stats", return_value={})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @patch.object(pipeline, "QUANT_ENABLED", False)
     @patch.object(pipeline, "score_market")
     def test_quant_disabled_uses_ai_only(self, mock_score):
@@ -110,6 +115,33 @@ class PipelineTests(unittest.TestCase):
         mock_score.return_value = ai
         result = pipeline.analyze_market(MARKET)
         self.assertEqual(result["agreement"], "ai_only")
+
+    @patch.object(pipeline, "QUANT_ENABLED", True)
+    @patch.object(pipeline, "QUANT_PREFILTER", True)
+    @patch.object(pipeline, "fetch_order_book", return_value=LIQUID_BOOK)
+    @patch.object(pipeline, "fetch_price_history", return_value=_rising())
+    @patch.object(pipeline, "score_market")
+    def test_multi_outcome_can_switch_to_better_quant_edge(self, mock_score, *_):
+        market = {
+            **MARKET,
+            "outcomes": ["A", "B", "C"],
+            "prices": [0.60, 0.20, 0.20],
+            "token_ids": ["tokA", "tokB", "tokC"],
+        }
+        mock_score.return_value = {
+            **_ai_pick(),
+            "recommended_outcome": "A",
+            "recommended_outcome_index": 0,
+            "current_price": 0.60,
+            "fair_value_estimate": 0.63,
+            "probability": 0.63,
+            "edge": 0.03,
+        }
+
+        result = pipeline.analyze_market(market)
+
+        self.assertEqual(result["recommended_outcome"], "B")
+        self.assertTrue(result["multi_outcome_override"])
 
 
 if __name__ == "__main__":

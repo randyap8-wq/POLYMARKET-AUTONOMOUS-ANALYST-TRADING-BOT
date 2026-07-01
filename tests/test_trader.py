@@ -66,6 +66,33 @@ class PlaceBetTests(unittest.TestCase):
         # A present-but-zero stake is a veto: do not fall back to edge sizing.
         self.assertIsNone(place_bet(market, score))
 
+    @patch("polymarket_bot.trader._append_trade_log")
+    @patch("polymarket_bot.trader._best_ask_price", return_value=0.25)
+    @patch(
+        "polymarket_bot.trader._fetch_market_tokens",
+        return_value=[{"outcome": "Yes", "token_id": "token-123"}],
+    )
+    def test_lower_ask_is_not_treated_as_slippage(self, *_mocks):
+        market = {"condition_id": "cond-1", "question": "Will it rain?"}
+        score = {"recommended_outcome": "Yes", "current_price": 0.29, "edge": 0.20}
+
+        result = place_bet(market, score)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["price"], 0.25)
+
+    @patch("polymarket_bot.trader._append_trade_log")
+    @patch("polymarket_bot.trader._best_ask_price", return_value=0.32)
+    @patch(
+        "polymarket_bot.trader._fetch_market_tokens",
+        return_value=[{"outcome": "Yes", "token_id": "token-123"}],
+    )
+    def test_higher_ask_aborts_when_price_moves_up(self, *_mocks):
+        market = {"condition_id": "cond-1", "question": "Will it rain?"}
+        score = {"recommended_outcome": "Yes", "current_price": 0.29, "edge": 0.20}
+
+        self.assertIsNone(place_bet(market, score))
+
 
 if __name__ == "__main__":
     unittest.main()
