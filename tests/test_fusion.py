@@ -57,13 +57,14 @@ class FuseSignalsTests(unittest.TestCase):
         self.assertLess(result["edge"], 0.12)
         self.assertEqual(result["recommended_outcome"], "Yes")  # not vetoed
 
-    def test_strong_disagreement_discounts_without_veto(self):
+    def test_strong_disagreement_vetoes(self):
         result = fuse_signals(_ai(), _quant(-0.6))
-        self.assertEqual(result["agreement"], "disagree")
-        self.assertEqual(result["position_size_multiplier"], 0.3)
-        self.assertEqual(result["recommended_outcome"], "Yes")
-        self.assertTrue(result["news_supports_bet"])
-        self.assertNotIn("veto_reason", result)
+        self.assertEqual(result["agreement"], "strong_disagree_veto")
+        self.assertEqual(result["edge"], 0.0)
+        self.assertEqual(result["position_size_multiplier"], 0.0)
+        self.assertEqual(result["direction"], "HOLD")
+        self.assertIsNone(result["recommended_outcome"])
+        self.assertIn("strong quant disagreement", result["veto_reason"])
 
     def test_untradeable_book_vetoes(self):
         result = fuse_signals(_ai(), _quant(0.3, tradeable=False))

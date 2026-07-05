@@ -249,18 +249,54 @@ def fuse_signals(
     confidence = result["confidence"]
     position_size_multiplier = 1.0
 
+    strong_disagreement_veto = False
     if agreement == "agree":
         if quant_score >= _STRONG_AGREE and quant.get("tradeable"):
             confidence = _adjust_confidence(confidence, +10.0)
     elif agreement == "disagree":
-        position_size_multiplier = DISAGREEMENT_DISCOUNT
-        confidence = _adjust_confidence(confidence, -20.0)
-        LOGGER.info(
-            "AI/quant disagreement: ai_reason=%s quant_reason=%s quant_score=%.3f",
-            ai_signal.get("reasoning", ""),
-            quant.get("reason", ""),
-            quant_score,
+        # A STRONG quant disagreement is a full veto, not a discount. Docs and
+        # the README have described this behavior; previously the code only
+        # ever applied a size discount regardless of how strong the quant
+        # conviction was, which meant we still took bets the microstructure
+        # signal was screaming against. Only a mild/ambiguous disagreement
+        # gets the softer discount treatment.
+        if abs(quant_score) >= _STRONG_AGREE and quant.get("tradeable"):
+            strong_disagreement_veto = True
+            position_size_multiplier = 0.0
+            confidence = _adjust_confidence(confidence, -40.0)
+            LOGGER.info(
+                "STRONG AI/quant disagreement -> VETO: ai_reason=%s quant_reason=%s quant_score=%.3f",
+                ai_signal.get("reasoning", ""),
+                quant.get("reason", ""),
+                quant_score,
+            )
+        else:
+            position_size_multiplier = DISAGREEMENT_DISCOUNT
+            confidence = _adjust_confidence(confidence, -20.0)
+            LOGGER.info(
+                "AI/quant disagreement: ai_reason=%s quant_reason=%s quant_score=%.3f",
+                ai_signal.get("reasoning", ""),
+                quant.get("reason", ""),
+                quant_score,
+            )
+
+    if strong_disagreement_veto:
+        result.update(
+            {
+                "agreement": "strong_disagree_veto",
+                "fused": True,
+                "edge": 0.0,
+                "confidence": confidence,
+                "confidence_level": _confidence_level(confidence),
+                "position_size_multiplier": 0.0,
+                "direction": "HOLD",
+                "recommended_outcome": None,
+                "recommended_outcome_index": None,
+                "outcome_index": None,
+                "veto_reason": f"strong quant disagreement (quant_score={quant_score:.3f})",
+            }
         )
+        return result
 
     result.update(
         {
